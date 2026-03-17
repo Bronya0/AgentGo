@@ -1,0 +1,51 @@
+# Binaries
+agent
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+
+# Go
+*.out
+go.sum
+*.test
+bin/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.tags
+tags
+
+# Environment
+.env
+.env.local
+config.yaml
+config.local.yaml
+
+# Data
+.agent/
+.cache/
+*.db
+*.sqlite
+*.json.bak
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.log
+*_test
+
+# OS
+.DS_Store
+Thumbs.db
+.AppleDouble
+.LSOverride

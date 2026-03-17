@@ -1,0 +1,52 @@
+# mini-agent 配置示例
+# 复制此文件为 config.yaml 并修改配置
+
+# LLM Provider 配置（单 provider 简写）
+provider:
+  type: openai          # openai 兼容格式（适用于 OpenAI / DeepSeek / Ollama 等）
+  base_url: "https://api.openai.com/v1"   # API 地址
+  api_key: "sk-xxx"     # API Key
+  model: "gpt-4o"       # 模型名称
+  timeout: 120s         # 超时时间
+
+# 多 Provider Failover 配置（可选，优先级按列表顺序）
+# providers:
+#   - id: primary
+#     type: openai
+#     base_url: "https://api.openai.com/v1"
+#     api_key: "sk-xxx"
+#     model: "gpt-4o"
+#   - id: fallback
+#     type: openai
+#     base_url: "https://api.deepseek.com/v1"
+#     api_key: "sk-xxx"
+#     model: "deepseek-chat"
+
+# HTTP Gateway 配置
+gateway:
+  addr: ":8080"         # 监听地址
+  token: ""             # Bearer token 认证（空则不认证）
+
+# 工作区目录（文件工具的沙箱根目录）
+workspace_dir: "."
+
+# 上下文 token 上限
+max_context_tokens: 100000
+
+# 额外 system prompt（追加到默认 prompt 后）
+system_prompt_extra: ""
+
+# Skill 目录列表
+skill_dirs:
+  - "./skills"
+
+# 记忆系统
+memory:
+  enabled: false
+  dir: ".agent/memory"
+
+# 定时任务
+# crons:
+#   - id: daily-summary
+#     schedule: "every 24h"
+#     prompt: "生成今日工作总结"
