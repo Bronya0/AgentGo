@@ -23,6 +23,8 @@ type Config struct {
 	SystemPromptExtra string           `yaml:"system_prompt_extra"`
 	Crons             []CronJobConfig  `yaml:"crons"`
 	Memory            MemoryConfig     `yaml:"memory"`
+	Channels          ChannelsConfig   `yaml:"channels"` // 聊天渠道配置
+	ACL               ACLConfig        `yaml:"acl"`      // 访问控制配置
 }
 
 // GatewayConfig 配置 HTTP 网关。
@@ -52,6 +54,50 @@ type CronJobConfig struct {
 type MemoryConfig struct {
 	Dir     string `yaml:"dir"`
 	Enabled bool   `yaml:"enabled"`
+}
+
+// ChannelsConfig 聊天渠道总配置。
+type ChannelsConfig struct {
+	WeCom    WeComChannelConfig    `yaml:"wecom"`
+	DingTalk DingTalkChannelConfig `yaml:"dingtalk"`
+	Feishu   FeishuChannelConfig   `yaml:"feishu"`
+}
+
+// WeComChannelConfig 企业微信应用消息渠道配置。
+type WeComChannelConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	CorpID         string `yaml:"corp_id"`
+	AgentID        int    `yaml:"agent_id"`
+	Secret         string `yaml:"secret"`
+	Token          string `yaml:"token"`
+	EncodingAESKey string `yaml:"encoding_aes_key"`
+}
+
+// DingTalkChannelConfig 钉钉机器人渠道配置。
+type DingTalkChannelConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	AppKey    string `yaml:"app_key"`
+	AppSecret string `yaml:"app_secret"`
+	RobotCode string `yaml:"robot_code"` // 机器人编码（可选）
+}
+
+// FeishuChannelConfig 飞书机器人渠道配置。
+type FeishuChannelConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	AppID             string `yaml:"app_id"`
+	AppSecret         string `yaml:"app_secret"`
+	VerificationToken string `yaml:"verification_token"`
+	EncryptKey        string `yaml:"encrypt_key"` // 可选
+}
+
+// ACLConfig 访问控制配置。
+type ACLConfig struct {
+	Enabled       bool     `yaml:"enabled"`
+	DefaultPolicy string   `yaml:"default_policy"` // "allow"（默认）或 "deny"
+	Admins        []string `yaml:"admins"`          // 管理员: ["platform:userID", ...]
+	AllowUsers    []string `yaml:"allow_users"`     // 白名单
+	DenyUsers     []string `yaml:"deny_users"`      // 黑名单
+	DenyTools     []string `yaml:"deny_tools"`      // 非管理员禁用的工具
 }
 
 // Load 从 YAML 文件加载配置并应用默认值。

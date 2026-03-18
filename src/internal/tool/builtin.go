@@ -6,11 +6,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -322,7 +324,7 @@ func GrepFiles(workspaceDir string) Tool {
 func RunCommand(workspaceDir string) Tool {
 	return Tool{
 		Name:        "run_command",
-		Description: "Run a shell command in the workspace directory. Returns stdout and stderr. Use with caution.",
+		Description: "Run a shell command in the workspace directory. Returns stdout and stderr. Dangerous commands are blocked for safety.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -343,6 +345,15 @@ func RunCommand(workspaceDir string) Tool {
 				return Errf("%v", err)
 			}
 
+			// 安全检查：拒绝危险命令
+			if reason := checkCommandSafety(command); reason != "" {
+				slog.Warn("run_command: blocked dangerous command",
+					"command", truncateLine(command, 100),
+					"reason", reason,
+				)
+				return Errf("command blocked: %s", reason)
+			}
+
 			timeoutSec := 30.0
 			if v, ok := args["timeout_seconds"]; ok {
 				if f, ok := v.(float64); ok && f > 0 && f <= 300 {
@@ -357,9 +368,17 @@ func RunCommand(workspaceDir string) Tool {
 			cmd.Dir = workspaceDir
 			setProcAttr(cmd)
 
+			// 环境变量过滤：移除敏感信息
+			cmd.Env = sanitizeEnv(os.Environ())
+
 			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
+			cmd.Stdout = &limitWriter{w: &stdout, maxSize: 48 * 1024}
+			cmd.Stderr = &limitWriter{w: &stderr, maxSize: 16 * 1024}
+
+			slog.Info("run_command: executing",
+				"command", truncateLine(command, 200),
+				"timeout", timeoutSec,
+			)
 
 			runErr := cmd.Run()
 
@@ -533,6 +552,120 @@ func truncateLine(line string, maxLen int) string {
 		return line
 	}
 	return line[:maxLen] + "..."
+}
+
+// --- 命令执行安全工具 ---
+
+// dangerousPatterns 匹配高危命令模式。
+var dangerousPatterns = []*regexp.Regexp{
+	// 系统破坏类
+	regexp.MustCompile(`(?i)\brm\s+(-[a-z]*f[a-z]*\s+)?(/|\$HOME|~|%[A-Z])`), // rm -rf /
+	regexp.MustCompile(`(?i)\bmkfs\b`),                                       // 格式化文件系统
+	regexp.MustCompile(`(?i)\bformat\s+[a-z]:`),                              // Windows format
+	regexp.MustCompile(`(?i)\bdd\s+.*\bof=/dev/`),                            // dd 写入设备
+	regexp.MustCompile(`(?i)>\s*/dev/sd`),                                    // 重定向到磁盘设备
+	regexp.MustCompile(`(?i)\bshutdown\b`),                                   // 关机
+	regexp.MustCompile(`(?i)\breboot\b`),                                     // 重启
+	regexp.MustCompile(`(?i)\binit\s+[06]\b`),                                // init 0/6
+
+	// 反弹 Shell / 后门类
+	regexp.MustCompile(`(?i)\bnc\s+.*-[a-z]*e\b`),   // nc -e (reverse shell)
+	regexp.MustCompile(`(?i)\bncat\s+.*-[a-z]*e\b`), // ncat -e
+	regexp.MustCompile(`(?i)\bsocat\b.*\bexec\b`),   // socat exec
+	regexp.MustCompile(`(?i)/dev/tcp/`),             // bash reverse shell
+	regexp.MustCompile(`(?i)\bbash\s+-i\s+>&`),      // bash -i >& /dev/tcp
+
+	// 权限提升类
+	regexp.MustCompile(`(?i)\bchmod\s+[0-7]*s`), // setuid/setgid
+	regexp.MustCompile(`(?i)\bchmod\s+4`),       // setuid
+	regexp.MustCompile(`(?i)\bsudo\b`),          // sudo
+	regexp.MustCompile(`(?i)\bsu\s+-\b`),        // su -
+	regexp.MustCompile(`(?i)\brunas\b`),         // Windows runas
+
+	// Fork 炸弹
+	regexp.MustCompile(`:\(\)\{.*\|.*\};:`), // bash fork bomb
+	regexp.MustCompile(`(?i)%0\|%0`),        // Windows fork bomb
+
+	// 破坏性注册表/系统修改 (Windows)
+	regexp.MustCompile(`(?i)\breg\s+delete\b.*\\\\HKLM`), // 删除 HKLM 注册表
+	regexp.MustCompile(`(?i)\bbcdedit\b`),                // 修改启动配置
+}
+
+// sensitiveEnvPrefixes 含敏感信息的环境变量前缀/模式。
+var sensitiveEnvKeys = map[string]bool{
+	"API_KEY": true, "APIKEY": true,
+	"SECRET": true, "SECRET_KEY": true, "APP_SECRET": true,
+	"TOKEN": true, "ACCESS_TOKEN": true, "AUTH_TOKEN": true,
+	"PASSWORD": true, "PASSWD": true,
+	"PRIVATE_KEY":           true,
+	"AWS_SECRET_ACCESS_KEY": true, "AWS_SESSION_TOKEN": true,
+	"AZURE_CLIENT_SECRET": true,
+	"GH_TOKEN":            true, "GITHUB_TOKEN": true, "GITLAB_TOKEN": true,
+	"DATABASE_URL": true, "DB_PASSWORD": true,
+	"OPENAI_API_KEY": true, "ANTHROPIC_API_KEY": true,
+}
+
+// checkCommandSafety 检查命令是否包含危险模式。
+// 返回空字符串表示安全，否则返回拒绝原因。
+func checkCommandSafety(command string) string {
+	for _, p := range dangerousPatterns {
+		if p.MatchString(command) {
+			return fmt.Sprintf("matches dangerous pattern: %s", p.String())
+		}
+	}
+	return ""
+}
+
+// sanitizeEnv 过滤环境变量，移除含敏感信息的变量。
+func sanitizeEnv(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, e := range env {
+		k, _, ok := strings.Cut(e, "=")
+		if !ok {
+			continue
+		}
+		upper := strings.ToUpper(k)
+		// 检查精确匹配
+		if sensitiveEnvKeys[upper] {
+			continue
+		}
+		// 检查包含敏感关键词
+		if containsSensitiveKeyword(upper) {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	return filtered
+}
+
+func containsSensitiveKeyword(key string) bool {
+	keywords := []string{"_KEY", "_SECRET", "_TOKEN", "_PASSWORD", "PASSWD", "CREDENTIAL"}
+	for _, kw := range keywords {
+		if strings.Contains(key, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// limitWriter 限制写入的最大字节数。
+type limitWriter struct {
+	w       *bytes.Buffer
+	maxSize int
+	written int
+}
+
+func (lw *limitWriter) Write(p []byte) (int, error) {
+	remaining := lw.maxSize - lw.written
+	if remaining <= 0 {
+		return len(p), nil // 静默丢弃超出部分
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	n, err := lw.w.Write(p)
+	lw.written += n
+	return n, err
 }
 
 // parseInt64 安全地从 Args 获取整数。

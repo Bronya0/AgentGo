@@ -76,6 +76,9 @@ func New(r *runner.Runner, sessions *session.Pool, addr, token string) *Server {
 	return s
 }
 
+// Mux 返回底层 ServeMux，供外部模块（如 Channel）注册路由。
+func (s *Server) Mux() *http.ServeMux { return s.mux }
+
 // Start 启动 HTTP 服务器（阻塞）。
 func (s *Server) Start() error {
 	slog.Info("gateway listening", "addr", s.httpSrv.Addr)

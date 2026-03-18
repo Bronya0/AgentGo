@@ -45,8 +45,91 @@ memory:
   enabled: false
   dir: ".agent/memory"
 
+# 聊天渠道配置
+# 启用后，用户可通过聊天软件直接与 Agent 交互
+channels:
+  # 企业微信应用消息渠道
+  # 配置步骤：
+  #   1. 在企业微信管理后台 (https://work.weixin.qq.com) 创建自建应用
+  #   2. 记录 CorpID、AgentID、Secret
+  #   3. 在「接收消息」中设置 URL: http://your-server:8080/channel/wecom/callback
+  #   4. 记录 Token 和 EncodingAESKey 填入下方配置
+  wecom:
+    enabled: false
+    corp_id: ""              # 企业 ID（在「我的企业」页面查看）
+    agent_id: 0              # 应用 AgentID
+    secret: ""               # 应用 Secret
+    token: ""                # 接收消息回调的 Token
+    encoding_aes_key: ""     # 接收消息回调的 EncodingAESKey
+
+  # 钉钉企业内部机器人渠道
+  # 配置步骤：
+  #   1. 在钉钉开放平台 (https://open-dev.dingtalk.com) 创建企业内部应用
+  #   2. 开启机器人能力
+  #   3. 配置消息接收地址: http://your-server:8080/channel/dingtalk/callback
+  #   4. 记录 AppKey 和 AppSecret
+  dingtalk:
+    enabled: false
+    app_key: ""              # 应用 AppKey
+    app_secret: ""           # 应用 AppSecret
+    robot_code: ""           # 机器人编码（可选）
+
+  # 飞书（Lark）机器人渠道
+  # 配置步骤：
+  #   1. 在飞书开放平台 (https://open.feishu.cn) 创建企业自建应用
+  #   2. 开启机器人能力
+  #   3. 在「事件订阅」中配置请求地址: http://your-server:8080/channel/feishu/callback
+  #   4. 订阅 im.message.receive_v1 事件
+  #   5. 记录 App ID、App Secret、Verification Token
+  feishu:
+    enabled: false
+    app_id: ""               # 应用 App ID
+    app_secret: ""           # 应用 App Secret
+    verification_token: ""   # 事件订阅 Verification Token
+    encrypt_key: ""          # 事件订阅 Encrypt Key（可选，用于消息加密）
+
+# 访问控制（ACL）
+# 控制哪些用户可以使用 Agent、哪些工具对普通用户受限
+# 用户标识格式: "platform:userID"，例如 "wecom:ZhangSan"、"dingtalk:staff123"
+acl:
+  enabled: false
+  default_policy: allow      # "allow"（默认放行）或 "deny"（默认拒绝）
+  # 管理员（拥有全部权限，不受工具限制）
+  admins: []
+    # - "wecom:admin_userid"
+    # - "dingtalk:admin_staffid"
+  # 白名单（配置后只有列表中的用户可以使用 Agent）
+  allow_users: []
+    # - "wecom:user1"
+    # - "feishu:ou_xxx"
+  # 黑名单（明确禁止的用户）
+  deny_users: []
+    # - "wecom:blocked_user"
+  # 非管理员禁用的工具（危险操作限制）
+  deny_tools: []
+    # - "run_command"    # 禁止执行终端命令
+    # - "write_file"     # 禁止写文件
+    # - "edit_file"      # 禁止编辑文件
+
 # 定时任务
+# 支持格式：
+#   - "every 5m" / "every 1h" / "every 30s" — 固定间隔
+#   - "daily 19:00" — 每天定时（24 小时制）
+#
+# 示例：每天 19:00 自动 Code Review GitLab 仓库
 # crons:
+#   - id: daily-code-review
+#     schedule: "daily 19:00"
+#     prompt: |
+#       请执行以下 Code Review 任务：
+#       1. 进入仓库目录 /path/to/your/repo
+#       2. 使用 git_pull 拉取最新代码
+#       3. 使用 git_log（since: "1 day ago"）查看今天的所有提交
+#       4. 对每个提交使用 git_show 查看完整 diff
+#       5. 按照 Code Review 技能要求，对每个提交进行审查
+#       6. 生成完整的审查报告
+#       7. 将报告通过 webhook_notify 发送到 https://your-webhook-url
+#
 #   - id: daily-summary
 #     schedule: "every 24h"
 #     prompt: "生成今日工作总结"

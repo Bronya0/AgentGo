@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bronya/mini-agent/internal/acl"
 	"github.com/bronya/mini-agent/internal/plugin"
 	"github.com/bronya/mini-agent/internal/provider"
 	"github.com/bronya/mini-agent/internal/session"
@@ -48,6 +49,7 @@ type Runner struct {
 	provider     provider.Provider
 	tools        *tool.Registry
 	hooks        *plugin.Hooks
+	acl          *acl.Service // 可选，nil 表示不做工具级权限检查
 	systemPrompt string
 	maxTurns     int // 最大循环次数（防无限循环），默认 32
 	maxTokens    int // 上下文 token 上限（超出时截断旧消息）
@@ -58,6 +60,7 @@ type Config struct {
 	Provider     provider.Provider
 	Tools        *tool.Registry
 	Hooks        *plugin.Hooks
+	ACL          *acl.Service // 可选
 	SystemPrompt string
 	MaxTurns     int
 	MaxTokens    int
@@ -78,6 +81,7 @@ func New(cfg Config) *Runner {
 		provider:     cfg.Provider,
 		tools:        cfg.Tools,
 		hooks:        cfg.Hooks,
+		acl:          cfg.ACL,
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     cfg.MaxTurns,
 		maxTokens:    cfg.MaxTokens,
@@ -176,6 +180,16 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ToolCall, handler 
 	if !ok {
 		result = tool.Errf("unknown tool: %s", tc.Name)
 		return result
+	}
+
+	// ACL 工具级权限检查
+	if r.acl != nil {
+		if u, ok := acl.GetUser(ctx); ok {
+			if !r.acl.CanUseTool(u.Platform, u.UserID, tc.Name) {
+				result = tool.Errf("permission denied: you are not allowed to use tool %q", tc.Name)
+				return result
+			}
+		}
 	}
 
 	// 解析参数
