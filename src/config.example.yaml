@@ -22,6 +22,28 @@ provider:
 #     api_key: "sk-xxx"
 #     model: "deepseek-chat"
 
+# 多模型路由模式（可选，根据任务复杂度自动选择模型）
+# 配置 tier 字段后自动启用路由模式（fast/balanced/powerful）。
+# providers:
+#   - id: fast-model
+#     type: openai
+#     base_url: "https://api.openai.com/v1"
+#     api_key: "sk-xxx"
+#     model: "gpt-4o-mini"
+#     tier: fast            # 简单问答、翻译等轻量任务
+#   - id: balanced-model
+#     type: openai
+#     base_url: "https://api.openai.com/v1"
+#     api_key: "sk-xxx"
+#     model: "gpt-4o"
+#     tier: balanced         # 常规任务（默认）
+#   - id: powerful-model
+#     type: openai
+#     base_url: "https://api.openai.com/v1"
+#     api_key: "sk-xxx"
+#     model: "o1-preview"
+#     tier: powerful         # 复杂推理、多文件重构等
+
 # HTTP Gateway 配置
 gateway:
   addr: ":8080"         # 监听地址

@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -64,6 +65,8 @@ func New(r *runner.Runner, sessions *session.Pool, addr, token string) *Server {
 	}
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("/v1/chat", s.authMiddleware(s.handleChat))
+	s.mux.HandleFunc("/v1/session/export", s.authMiddleware(s.handleExport))
+	s.mux.HandleFunc("/v1/session/import", s.authMiddleware(s.handleImport))
 	s.mux.HandleFunc("/healthz", handleHealthz)
 
 	s.httpSrv = &http.Server{
@@ -199,6 +202,86 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"status":"ok"}`)
+}
+
+// --- 对话导出/导入 ---
+
+// handleExport 处理 GET /v1/session/export?session_id=xxx&format=json|markdown
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	if !validSessionID.MatchString(sessionID) {
+		http.Error(w, "invalid session_id", http.StatusBadRequest)
+		return
+	}
+
+	format := session.ExportFormat(r.URL.Query().Get("format"))
+	if format == "" {
+		format = session.FormatJSON
+	}
+	if format != session.FormatJSON && format != session.FormatMarkdown {
+		http.Error(w, "format must be json or markdown", http.StatusBadRequest)
+		return
+	}
+
+	sess := s.sessions.Get(sessionID)
+	content, err := sess.Export(format)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	switch format {
+	case session.FormatMarkdown:
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, sessionID))
+	default:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.json"`, sessionID))
+	}
+	fmt.Fprint(w, content)
+}
+
+// handleImport 处理 POST /v1/session/import?session_id=xxx
+// 请求体为 JSON 格式的导出数据。
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	if !validSessionID.MatchString(sessionID) {
+		http.Error(w, "invalid session_id", http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "request body too large or read error", http.StatusBadRequest)
+		return
+	}
+
+	sess := s.sessions.Get(sessionID)
+	if err := sess.Import(data); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = sess.Save()
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"status":"ok","session_id":%q}`, sessionID)
 }
 
 // --- per-session 串行执行控制 ---

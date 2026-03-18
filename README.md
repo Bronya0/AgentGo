@@ -18,11 +18,24 @@ go build -o agent ./cmd/agent/
 复制 `src/config.example.yaml` 为 `src/config.yaml`，填入你的 LLM API 信息：
 
 ```yaml
+# 单 provider 模式
 provider:
   type: openai
   base_url: "https://api.openai.com/v1"
   api_key: "${OPENAI_API_KEY}"    # 支持环境变量展开
   model: "gpt-4o"
+
+# 多模型路由模式（按复杂度自动选择）
+providers:
+  - id: fast
+    model: gpt-4o-mini
+    tier: fast           # 简单问答
+  - id: balanced
+    model: gpt-4o
+    tier: balanced       # 常规任务（默认）
+  - id: powerful
+    model: o1-preview
+    tier: powerful       # 复杂推理
 ```
 
 ### 运行
@@ -56,7 +69,19 @@ data: {"type":"text","text":"你好！"}
 data: {"type":"tool_start","tool":"list_dir","args":"{\"path\":\".\"}" }
 data: {"type":"done"}
 ```
+### 对话导出/导入
 
+```bash
+# 导出为 JSON（可精确还原）
+curl "http://localhost:8080/v1/session/export?session_id=user-1&format=json" -o chat.json
+
+# 导出为 Markdown（人类可读）
+curl "http://localhost:8080/v1/session/export?session_id=user-1&format=markdown" -o chat.md
+
+# 导入 JSON 对话
+curl -X POST "http://localhost:8080/v1/session/import?session_id=user-1" \
+  -H "Content-Type: application/json" -d @chat.json
+```
 ## 架构概览
 
 ### 核心循环
@@ -83,10 +108,10 @@ ACL 工具级权限检查 → 执行工具调用（若有）
 
 | 组件 | 说明 |
 |------|------|
-| **Provider** | OpenAI 兼容的 LLM API 客户端，含自动重试和 failover |
+| **Provider** | OpenAI 兼容的 LLM API 客户端，含自动重试、failover 和多模型路由 |
 | **Tools** | 20 个工具（文件操作、命令执行、Git、Webhook、定时任务管理等） |
-| **Session** | 对话历史管理，支持 JSON 持久化 |
-| **Runner** | Agent 核心循环，含工具执行、循环检测、ACL 鉴权 |
+| **Session** | 对话历史管理，支持 JSON 持久化、Markdown/JSON 导出导入 |
+| **Runner** | Agent 核心循环，含并行工具执行、上下文压缩、循环检测、ACL 鉴权 |
 | **Plugin** | 基于 Hook 的扩展系统（5 个钩子点） |
 | **Skill** | 通过 SKILL.md 文件注入能力描述 |
 | **Gateway** | HTTP SSE 流式 API 服务器 |
@@ -275,6 +300,12 @@ crons:
 
 ## 功能特性一览
 
+### 智能调度
+- **多模型路由**：根据任务复杂度自动选择 fast/balanced/powerful 模型
+- **LLM 上下文压缩**：token 达到 70% 上限时自动通过 LLM 摘要压缩早期对话
+- **并行工具执行**：多个 tool_calls 自动并发执行，线程安全
+- **对话导出/导入**：支持 JSON（精确还原）和 Markdown（人类可读）两种格式
+
 ### 可靠性
 - 指数退避自动重试（3 次重试，500ms-5s）
 - 多 Provider failover + 冷却机制
@@ -319,9 +350,12 @@ src/
     ├── provider/                  # LLM Provider
     │   ├── provider.go            # 接口定义
     │   ├── openai.go              # OpenAI 兼容客户端
-    │   └── failover.go            # 多 Provider 故障转移
+    │   ├── failover.go            # 多 Provider 故障转移
+    │   └── router.go              # 多模型智能路由
     ├── runner/runner.go           # Agent 核心循环
-    ├── session/session.go         # 会话管理
+    ├── session/
+    │   ├── session.go             # 会话管理
+    │   └── export.go              # 对话导出/导入（JSON + Markdown）
     ├── skill/skill.go             # Skill 加载器
     └── tool/                      # 工具系统
         ├── tool.go                # 接口 + 注册表
@@ -365,8 +399,10 @@ require gopkg.in/yaml.v3 v3.0.1
 | SSRF 防护 | ✅ 已完成 |
 | Code Review 技能 | ✅ 已完成 |
 | 跨平台命令执行 | ✅ 已完成 |
-| LLM 上下文压缩 | ⏳ 待实现 |
-| 并行工具执行 | ⏳ 待实现 |
+| LLM 上下文压缩 | ✅ 已完成（70% 阈值自动摘要） |
+| 并行工具执行 | ✅ 已完成（goroutine + WaitGroup） |
+| 多模型路由策略 | ✅ 已完成（fast/balanced/powerful 自动分级） |
+| 对话导出/导入 | ✅ 已完成（JSON + Markdown） |
 | 子 Agent 委托 | ⏳ 待实现 |
 | 向量数据库集成 | ⏳ 待实现 |
 | Web UI | ⏳ 待实现 |

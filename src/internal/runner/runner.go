@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bronya/mini-agent/internal/acl"
@@ -148,15 +149,50 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 			return fmt.Errorf(errMsg)
 		}
 
-		// 执行每个 tool call
-		for _, tc := range assistantMsg.ToolCalls {
+		// 执行 tool calls（多个时并行执行）
+		if len(assistantMsg.ToolCalls) == 1 {
+			tc := assistantMsg.ToolCalls[0]
 			result := r.executeTool(ctx, tc, handler)
 			sess.Append(provider.Message{
 				Role:       provider.RoleTool,
 				ToolCallID: tc.ID,
 				Content:    result.Content,
 			})
+		} else {
+			type indexedResult struct {
+				tc     provider.ToolCall
+				result tool.Result
+			}
+			results := make([]indexedResult, len(assistantMsg.ToolCalls))
+			var wg sync.WaitGroup
+			var mu sync.Mutex // 保护 handler 回调
+
+			for i, tc := range assistantMsg.ToolCalls {
+				wg.Add(1)
+				go func(idx int, call provider.ToolCall) {
+					defer wg.Done()
+					safeHandler := func(chunk StreamChunk) {
+						mu.Lock()
+						handler(chunk)
+						mu.Unlock()
+					}
+					results[idx] = indexedResult{tc: call, result: r.executeTool(ctx, call, safeHandler)}
+				}(i, tc)
+			}
+			wg.Wait()
+
+			// 按原始顺序写入 session
+			for _, tr := range results {
+				sess.Append(provider.Message{
+					Role:       provider.RoleTool,
+					ToolCallID: tr.tc.ID,
+					Content:    tr.result.Content,
+				})
+			}
 		}
+
+		// 上下文压缩：在工具执行后检查是否需要压缩
+		r.maybeCompress(ctx, sess)
 	}
 
 	handler(StreamChunk{Event: EventError, Err: fmt.Errorf("max turns (%d) exceeded", r.maxTurns)})
@@ -240,9 +276,10 @@ func (r *Runner) buildToolDefs() []provider.ToolDefinition {
 	return defs
 }
 
-// buildMessages 构建发送给 LLM 的消息列表，含 system prompt 和上下文截断。
+// buildMessages 构建发送给 LLM 的消息列表，含 system prompt、压缩摘要和上下文截断。
 func (r *Runner) buildMessages(sess *session.Session) []provider.Message {
 	history := sess.History()
+	summary := sess.GetSummary()
 
 	var messages []provider.Message
 
@@ -254,9 +291,56 @@ func (r *Runner) buildMessages(sess *session.Session) []provider.Message {
 		})
 	}
 
+	// 压缩摘要（来自更早的被压缩对话）
+	if summary != "" {
+		messages = append(messages, provider.Message{
+			Role:    provider.RoleSystem,
+			Content: "[Earlier conversation summary]\n" + summary,
+		})
+	}
+
 	// 上下文截断：若估算 token 超限，保留最近的消息
 	messages = append(messages, r.trimHistory(history)...)
 	return messages
+}
+
+// maybeCompress 在上下文接近 token 上限时，通过 LLM 对较早的消息进行摘要压缩。
+func (r *Runner) maybeCompress(ctx context.Context, sess *session.Session) {
+	estimate := sess.TokenEstimate()
+	threshold := r.maxTokens * 70 / 100
+	if estimate < threshold {
+		return
+	}
+
+	history := sess.History()
+	half := len(history) / 2
+	if half < 4 {
+		return // 消息太少，不值得压缩
+	}
+
+	// 构建摘要请求：将前半部分对话传给 LLM
+	var sb strings.Builder
+	sb.WriteString("Summarize the following conversation concisely in the same language the user used. ")
+	sb.WriteString("Preserve key facts, decisions, code snippets, file paths, and any context needed for continuation:\n\n")
+	for _, m := range history[:half] {
+		content := m.Content
+		if len(content) > 600 {
+			content = content[:600] + "...[truncated]"
+		}
+		fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, content)
+	}
+
+	sumMsg, err := r.provider.Chat(ctx, []provider.Message{
+		{Role: provider.RoleSystem, Content: "You are a conversation summarizer. Produce a concise but thorough summary."},
+		{Role: provider.RoleUser, Content: sb.String()},
+	}, nil, nil)
+	if err != nil {
+		slog.Warn("context compression failed", "err", err)
+		return
+	}
+
+	sess.Compress(sumMsg.Content, half)
+	slog.Info("context compressed", "dropped", half, "remaining", len(history)-half, "summary_len", len(sumMsg.Content))
 }
 
 // trimHistory 在 token 预算内保留尽可能多的最近消息。

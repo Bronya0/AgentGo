@@ -41,6 +41,7 @@ type ProviderConfig struct {
 	APIKey  string        `yaml:"api_key"`
 	Model   string        `yaml:"model"`
 	Timeout time.Duration `yaml:"timeout"`
+	Tier    string        `yaml:"tier"` // fast / balanced / powerful（用于路由模式）
 }
 
 // CronJobConfig 描述一个定时任务。

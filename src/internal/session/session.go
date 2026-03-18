@@ -14,6 +14,7 @@ import (
 type Session struct {
 	ID       string             `json:"id"`
 	Messages []provider.Message `json:"messages"`
+	Summary  string             `json:"summary,omitempty"` // 压缩后的早期上下文摘要
 	mu       sync.Mutex
 	filePath string // 持久化路径（空表示不持久化）
 }
@@ -58,6 +59,30 @@ func (s *Session) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Messages = nil
+	s.Summary = ""
+}
+
+// Compress 将前 keepFromIndex 条消息的摘要存储，并丢弃这些消息。
+func (s *Session) Compress(summaryText string, keepFromIndex int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if keepFromIndex <= 0 || keepFromIndex > len(s.Messages) {
+		return
+	}
+	// 如有旧摘要，合并
+	if s.Summary != "" {
+		s.Summary = s.Summary + "\n\n" + summaryText
+	} else {
+		s.Summary = summaryText
+	}
+	s.Messages = append([]provider.Message(nil), s.Messages[keepFromIndex:]...)
+}
+
+// GetSummary 返回已压缩的上下文摘要。
+func (s *Session) GetSummary() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Summary
 }
 
 // Save 将会话持久化到磁盘（若已配置路径）。
