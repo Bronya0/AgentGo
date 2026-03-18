@@ -20,6 +20,7 @@ const (
 type Message struct {
 	Role       Role       `json:"role"`
 	Content    string     `json:"content,omitempty"`
+	Reasoning  string     `json:"reasoning,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // RoleTool 时的关联 ID
 }
@@ -41,6 +42,7 @@ type ToolDefinition struct {
 // StreamDelta 是流式输出的一个片段。
 type StreamDelta struct {
 	Text     string    // 文本增量
+	Reasoning string   // 思考增量（若 provider 支持）
 	ToolCall *ToolCall // 工具调用增量（ID 可能跨多个 delta 组装）
 	Done     bool      // 流结束标记
 }

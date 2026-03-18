@@ -159,10 +159,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			switch chunk.Event {
 			case runner.EventText:
 				send("text", map[string]any{"text": chunk.Text})
+			case runner.EventReasoning:
+				send("reasoning", map[string]any{"text": chunk.Reasoning})
 			case runner.EventToolStart:
-				send("tool_start", map[string]any{"tool": chunk.ToolName, "args": chunk.ToolArgs})
+				send("tool_start", map[string]any{"call_id": chunk.ToolID, "tool": chunk.ToolName, "args": chunk.ToolArgs})
 			case runner.EventToolEnd:
-				send("tool_end", map[string]any{"tool": chunk.ToolName, "output": chunk.ToolOut})
+				send("tool_end", map[string]any{"call_id": chunk.ToolID, "tool": chunk.ToolName, "output": chunk.ToolOut})
 			case runner.EventDone:
 				_ = sess.Save()
 				send("done", map[string]any{})

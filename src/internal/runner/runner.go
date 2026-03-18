@@ -29,6 +29,7 @@ type StreamEvent int
 
 const (
 	EventText      StreamEvent = iota // 文本增量
+	EventReasoning                    // 思考增量
 	EventToolStart                    // 工具调用开始
 	EventToolEnd                      // 工具调用结束
 	EventDone                         // 完成
@@ -39,6 +40,8 @@ const (
 type StreamChunk struct {
 	Event    StreamEvent
 	Text     string
+	Reasoning string
+	ToolID   string
 	ToolName string
 	ToolArgs string
 	ToolOut  string
@@ -121,6 +124,9 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 			if delta.Text != "" {
 				handler(StreamChunk{Event: EventText, Text: delta.Text})
 			}
+			if delta.Reasoning != "" {
+				handler(StreamChunk{Event: EventReasoning, Reasoning: delta.Reasoning})
+			}
 		}
 
 		assistantMsg, err := r.provider.Chat(ctx, messages, toolDefs, streamHandler)
@@ -145,8 +151,8 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 		if loopDetector.check(assistantMsg.ToolCalls) {
 			errMsg := "tool call loop detected, stopping agent"
 			slog.Warn(errMsg)
-			handler(StreamChunk{Event: EventError, Err: fmt.Errorf(errMsg)})
-			return fmt.Errorf(errMsg)
+			handler(StreamChunk{Event: EventError, Err: fmt.Errorf("%s", errMsg)})
+			return fmt.Errorf("%s", errMsg)
 		}
 
 		// 执行 tool calls（多个时并行执行）
@@ -201,7 +207,7 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 
 // executeTool 执行单个工具调用（含 panic 恢复）。
 func (r *Runner) executeTool(ctx context.Context, tc provider.ToolCall, handler func(StreamChunk)) (result tool.Result) {
-	handler(StreamChunk{Event: EventToolStart, ToolName: tc.Name, ToolArgs: tc.Arguments})
+	handler(StreamChunk{Event: EventToolStart, ToolID: tc.ID, ToolName: tc.Name, ToolArgs: tc.Arguments})
 
 	// panic 恢复
 	defer func() {
@@ -209,7 +215,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ToolCall, handler 
 			result = tool.Errf("tool %q panicked: %v", tc.Name, rv)
 			slog.Error("tool panic recovered", "tool", tc.Name, "panic", rv)
 		}
-		handler(StreamChunk{Event: EventToolEnd, ToolName: tc.Name, ToolOut: result.Content})
+		handler(StreamChunk{Event: EventToolEnd, ToolID: tc.ID, ToolName: tc.Name, ToolOut: result.Content})
 	}()
 
 	t, ok := r.tools.Get(tc.Name)

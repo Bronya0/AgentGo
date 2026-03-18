@@ -99,7 +99,7 @@ func (o *OpenAI) doFull(ctx context.Context, req goai.ChatCompletionRequest) (*M
 		"prompt", resp.Usage.PromptTokens, "completion", resp.Usage.CompletionTokens)
 
 	choice := resp.Choices[0]
-	out := &Message{Role: RoleAssistant, Content: choice.Message.Content}
+	out := &Message{Role: RoleAssistant, Content: choice.Message.Content, Reasoning: choice.Message.ReasoningContent}
 	for _, tc := range choice.Message.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{
 			ID:        tc.ID,
@@ -147,6 +147,10 @@ func (o *OpenAI) doStream(ctx context.Context, req goai.ChatCompletionRequest, h
 		if delta.Content != "" {
 			out.Content += delta.Content
 			handler(StreamDelta{Text: delta.Content})
+		}
+		if delta.ReasoningContent != "" {
+			out.Reasoning += delta.ReasoningContent
+			handler(StreamDelta{Reasoning: delta.ReasoningContent})
 		}
 
 		for _, tc := range delta.ToolCalls {
@@ -196,6 +200,7 @@ func (o *OpenAI) buildRequest(messages []Message, tools []ToolDefinition, stream
 		msg := goai.ChatCompletionMessage{
 			Role:       string(m.Role),
 			Content:    m.Content,
+			ReasoningContent: m.Reasoning,
 			ToolCallID: m.ToolCallID,
 		}
 		for _, tc := range m.ToolCalls {

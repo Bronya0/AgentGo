@@ -108,9 +108,21 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// 当前任务的取消函数，用于支持中止
+	// cancelRun 保存当前 Run goroutine 的取消函数；runWg 用于等待其退出
+	// 主循环持续读帧，Run 在独立 goroutine 运行，abort 消息因此可被即时处理
 	var cancelMu sync.Mutex
-	var cancelCurrent context.CancelFunc
+	var cancelRun context.CancelFunc
+	var runWg sync.WaitGroup
+
+	// 连接关闭时取消正在进行的 Run 并等待其退出
+	defer func() {
+		cancelMu.Lock()
+		if cancelRun != nil {
+			cancelRun()
+		}
+		cancelMu.Unlock()
+		runWg.Wait()
+	}()
 
 	for {
 		_, p, err := conn.ReadMessage()
@@ -130,15 +142,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// 中止指令
+		// 中止指令：取消正在进行的 Run，Run goroutine 检测到 ctx 取消后发 "aborted"
 		if ctrl.Type == "abort" {
 			cancelMu.Lock()
-			if cancelCurrent != nil {
-				cancelCurrent()
-				cancelCurrent = nil
+			if cancelRun != nil {
+				cancelRun()
 			}
 			cancelMu.Unlock()
-			sendJSON(map[string]any{"type": "aborted"})
 			continue
 		}
 
@@ -153,38 +163,57 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// 取消上一个 Run（如有），等待其 goroutine 退出后再启动新的
+		// 这样可避免两个 Run 并发访问同一 session
 		cancelMu.Lock()
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelCurrent = cancel
-		cancelMu.Unlock()
-
-		runErr := s.runner.Run(ctx, sess, msg, func(chunk runner.StreamChunk) {
-			if ctx.Err() != nil {
-				return // 已中止，不再推送
-			}
-			switch chunk.Event {
-			case runner.EventText:
-				sendJSON(map[string]any{"type": "text", "text": chunk.Text})
-			case runner.EventToolStart:
-				sendJSON(map[string]any{"type": "tool_start", "tool": chunk.ToolName, "args": chunk.ToolArgs})
-			case runner.EventToolEnd:
-				sendJSON(map[string]any{"type": "tool_end", "tool": chunk.ToolName, "output": chunk.ToolOut})
-			case runner.EventDone:
-				_ = sess.Save()
-				sendJSON(map[string]any{"type": "done"})
-			case runner.EventError:
-				if chunk.Err != nil {
-					sendJSON(map[string]any{"type": "error", "error": chunk.Err.Error()})
-				}
-			}
-		})
-
-		cancelMu.Lock()
-		cancelCurrent = nil
-		cancelMu.Unlock()
-
-		if runErr != nil && ctx.Err() == nil {
-			sendJSON(map[string]any{"type": "error", "error": runErr.Error()})
+		if cancelRun != nil {
+			cancelRun()
 		}
+		cancelMu.Unlock()
+		runWg.Wait()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelMu.Lock()
+		cancelRun = cancel
+		cancelMu.Unlock()
+
+		runWg.Add(1)
+		go func(ctx context.Context, msg string) {
+			defer runWg.Done()
+
+			runErr := s.runner.Run(ctx, sess, msg, func(chunk runner.StreamChunk) {
+				if ctx.Err() != nil {
+					return // 已中止，不再推送
+				}
+				switch chunk.Event {
+				case runner.EventText:
+					sendJSON(map[string]any{"type": "text", "text": chunk.Text})
+				case runner.EventReasoning:
+					sendJSON(map[string]any{"type": "reasoning", "text": chunk.Reasoning})
+				case runner.EventToolStart:
+					sendJSON(map[string]any{"type": "tool_start", "call_id": chunk.ToolID, "tool": chunk.ToolName, "args": chunk.ToolArgs})
+				case runner.EventToolEnd:
+					sendJSON(map[string]any{"type": "tool_end", "call_id": chunk.ToolID, "tool": chunk.ToolName, "output": chunk.ToolOut})
+				case runner.EventDone:
+					_ = sess.Save()
+					sendJSON(map[string]any{"type": "done"})
+				case runner.EventError:
+					if chunk.Err != nil {
+						sendJSON(map[string]any{"type": "error", "error": chunk.Err.Error()})
+					}
+				}
+			})
+
+			cancelMu.Lock()
+			cancelRun = nil
+			cancelMu.Unlock()
+
+			if ctx.Err() != nil {
+				// 被外部取消（abort 或新消息到来时）
+				sendJSON(map[string]any{"type": "aborted"})
+			} else if runErr != nil {
+				sendJSON(map[string]any{"type": "error", "error": runErr.Error()})
+			}
+		}(ctx, msg)
 	}
 }
