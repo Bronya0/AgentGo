@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bronya/mini-agent/internal/sandbox"
 )
 
 // Builtins 返回所有内置工具的列表。
@@ -28,6 +30,7 @@ func Builtins(workspaceDir string) []Tool {
 		ListDir(workspaceDir),
 		GrepFiles(workspaceDir),
 		RunCommand(workspaceDir),
+		RunCommandSandboxed(workspaceDir),
 		WebFetch(),
 	}
 }
@@ -666,6 +669,62 @@ func (lw *limitWriter) Write(p []byte) (int, error) {
 	n, err := lw.w.Write(p)
 	lw.written += n
 	return n, err
+}
+
+// RunCommandSandboxed 在隔离沙箱中执行命令（临时目录 + 最小环境变量）。
+func RunCommandSandboxed(workspaceDir string) Tool {
+	return Tool{
+		Name:        "run_command_sandboxed",
+		Description: "Run a shell command in an isolated sandbox (temporary directory, minimal environment). The workspace is accessible read-only as ./workspace/ symlink. Safer than run_command for untrusted operations.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command": map[string]any{
+					"type":        "string",
+					"description": "The shell command to execute in the sandbox",
+				},
+				"timeout_seconds": map[string]any{
+					"type":        "number",
+					"description": "Timeout in seconds (default 30, max 300)",
+				},
+			},
+			"required": []string{"command"},
+		},
+		Execute: func(ctx context.Context, args Args) Result {
+			command, err := MustGetString(args, "command")
+			if err != nil {
+				return Errf("%v", err)
+			}
+
+			if reason := checkCommandSafety(command); reason != "" {
+				return Errf("command blocked: %s", reason)
+			}
+
+			timeoutSec := 30.0
+			if v, ok := args["timeout_seconds"]; ok {
+				if f, ok := v.(float64); ok && f > 0 && f <= 300 {
+					timeoutSec = f
+				}
+			}
+
+			res := sandbox.Run(ctx, sandbox.Config{
+				WorkspaceDir: workspaceDir,
+				Timeout:      time.Duration(timeoutSec * float64(time.Second)),
+				MaxOutputKB:  48,
+			}, command)
+
+			output := sandbox.FormatResult(res)
+			const maxOutput = 32 * 1024
+			if len(output) > maxOutput {
+				output = output[:maxOutput] + "\n...[truncated]"
+			}
+
+			if res.Err != nil {
+				return Result{Content: output, IsError: true}
+			}
+			return OK(output)
+		},
+	}
 }
 
 // parseInt64 安全地从 Args 获取整数。

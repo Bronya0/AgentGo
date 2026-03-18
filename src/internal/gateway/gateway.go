@@ -65,6 +65,7 @@ func New(r *runner.Runner, sessions *session.Pool, addr, token string) *Server {
 	}
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("/v1/chat", s.authMiddleware(s.handleChat))
+	s.mux.HandleFunc("/v1/ws", s.authMiddleware(s.handleWebSocket))
 	s.mux.HandleFunc("/v1/session/export", s.authMiddleware(s.handleExport))
 	s.mux.HandleFunc("/v1/session/import", s.authMiddleware(s.handleImport))
 	s.mux.HandleFunc("/healthz", handleHealthz)

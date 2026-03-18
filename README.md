@@ -69,7 +69,35 @@ data: {"type":"text","text":"你好！"}
 data: {"type":"tool_start","tool":"list_dir","args":"{\"path\":\".\"}" }
 data: {"type":"done"}
 ```
-### 对话导出/导入
+### WebSocket 实时通信
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/v1/ws');
+ws.onopen = () => {
+  ws.send(JSON.stringify({ message: '你好', session_id: 'user-1' }));
+};
+ws.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  // { type: 'text' | 'tool_start' | 'tool_end' | 'done', ... }
+  console.log(data);
+};
+```
+
+### MCP 协议
+
+Agent 实现了 [Model Context Protocol](https://modelcontextprotocol.io/) 服务端，支持三种传输模式：
+
+```yaml
+mcp:
+  enabled: true
+  mode: http         # stdio | http
+```
+
+- **stdio 模式**：通过 stdin/stdout 进行 JSON-RPC 2.0 通信，适配 VS Code Copilot 等 MCP 客户端
+- **HTTP SSE 模式**：`GET /mcp` 建立 SSE 流 + `POST /mcp` 发送请求
+- **Streamable HTTP 模式**：`POST /mcp` 直接返回 JSON 响应
+
+支持的 MCP 方法：`initialize`、`tools/list`、`tools/call`、`ping`### 对话导出/导入
 
 ```bash
 # 导出为 JSON（可精确还原）
@@ -109,21 +137,23 @@ ACL 工具级权限检查 → 执行工具调用（若有）
 | 组件 | 说明 |
 |------|------|
 | **Provider** | OpenAI 兼容的 LLM API 客户端，含自动重试、failover 和多模型路由 |
-| **Tools** | 20 个工具（文件操作、命令执行、Git、Webhook、定时任务管理等） |
+| **Tools** | 25+ 工具（文件操作、命令执行、Git、Webhook、定时任务、沙箱、子 Agent 等） |
 | **Session** | 对话历史管理，支持 JSON 持久化、Markdown/JSON 导出导入 |
-| **Runner** | Agent 核心循环，含并行工具执行、上下文压缩、循环检测、ACL 鉴权 |
+| **Runner** | Agent 核心循环，含并行工具执行、上下文压缩、子 Agent 委托、循环检测 |
 | **Plugin** | 基于 Hook 的扩展系统（5 个钩子点） |
 | **Skill** | 通过 SKILL.md 文件注入能力描述 |
-| **Gateway** | HTTP SSE 流式 API 服务器 |
+| **Gateway** | HTTP SSE + WebSocket 双协议 API 服务器 |
 | **Channel** | 聊天平台渠道适配（企微 / 钉钉 / 飞书） |
+| **MCP** | Model Context Protocol 服务端（stdio / HTTP SSE / Streamable HTTP） |
 | **ACL** | 用户级 + 工具级访问控制 |
-| **Memory** | 长期记忆，关键词检索 |
+| **Memory** | 长期记忆，支持关键词检索和向量语义搜索 |
+| **Sandbox** | 进程级沙箱隔离（临时目录 + 最小环境变量 + 输出限制） |
 | **Cron** | 定时任务调度（支持固定间隔和每日定时，运行时动态增删） |
 | **Lane** | 命令队列，保证串行执行 |
 
 ## 工具列表
 
-### 内置工具（7 个）
+### 内置工具（8 个）
 
 | 工具 | 功能 |
 |------|------|
@@ -133,6 +163,7 @@ ACL 工具级权限检查 → 执行工具调用（若有）
 | `list_dir` | 列出目录内容 |
 | `grep_files` | 搜索文件内容（大小写不敏感、glob 过滤） |
 | `run_command` | 执行 Shell 命令（命令黑名单 + 环境变量过滤 + 输出限制） |
+| `run_command_sandboxed` | 沙箱命令执行（临时目录隔离 + 最小环境变量 + 输出限制） |
 | `web_fetch` | 获取网页内容（SSRF 防护） |
 
 ### Git 工具（4 个）
@@ -163,7 +194,14 @@ ACL 工具级权限检查 → 执行工具调用（若有）
 | 工具 | 功能 |
 |------|------|
 | `memory_add` | 保存信息到长期记忆（支持标签分类） |
-| `memory_search` | 基于关键词搜索记忆 |
+| `memory_search` | 基于关键词搜索记忆（支持向量语义搜索） |
+
+### 子 Agent 工具（2 个）
+
+| 工具 | 功能 |
+|------|------|
+| `delegate_task` | 将子任务委托给独立 Agent（独立会话上下文） |
+| `parallel_tasks` | 并行执行最多 5 个子任务（自动合并结果） |
 
 ## 聊天渠道
 
@@ -304,7 +342,18 @@ crons:
 - **多模型路由**：根据任务复杂度自动选择 fast/balanced/powerful 模型
 - **LLM 上下文压缩**：token 达到 70% 上限时自动通过 LLM 摘要压缩早期对话
 - **并行工具执行**：多个 tool_calls 自动并发执行，线程安全
+- **子 Agent 委托**：自动拆解复杂任务，委托独立 Agent 并行执行
 - **对话导出/导入**：支持 JSON（精确还原）和 Markdown（人类可读）两种格式
+
+### 协议 & 通信
+- **HTTP SSE**：流式文本输出
+- **WebSocket**：全双工实时通信（纯标准库 RFC 6455 实现）
+- **MCP 协议**：Model Context Protocol 服务端，支持 stdio / HTTP SSE / Streamable HTTP
+- **聊天渠道**：企业微信、钉钉、飞书渠道适配
+
+### 安全隔离
+- **进程沙箱**：临时目录隔离 + 最小环境变量 + 输出限制
+- **向量记忆**：支持 Embedding 语义搜索，cosine 相似度匹配，自动降级到关键词搜索
 
 ### 可靠性
 - 指数退避自动重试（3 次重试，500ms-5s）
@@ -343,23 +392,31 @@ src/
     │       └── feishu.go          # 事件订阅、消息解密
     ├── config/config.go           # 配置加载（YAML + 环境变量展开）
     ├── cron/cron.go               # 定时任务调度
-    ├── gateway/gateway.go         # HTTP SSE 网关
+    ├── gateway/
+    │   ├── gateway.go             # HTTP SSE 网关 + 路由注册
+    │   └── websocket.go           # WebSocket 实时通信（RFC 6455）
     ├── lane/lane.go               # 命令队列
-    ├── memory/memory.go           # 长期记忆系统
+    ├── mcp/mcp.go                 # MCP 协议服务端（JSON-RPC 2.0）
+    ├── memory/
+    │   ├── memory.go              # 长期记忆（关键词检索）
+    │   └── vector.go              # 向量记忆（Embedding + 余弦相似度）
     ├── plugin/plugin.go           # Hook 插件系统
     ├── provider/                  # LLM Provider
     │   ├── provider.go            # 接口定义
     │   ├── openai.go              # OpenAI 兼容客户端
     │   ├── failover.go            # 多 Provider 故障转移
     │   └── router.go              # 多模型智能路由
-    ├── runner/runner.go           # Agent 核心循环
+    ├── runner/
+    │   ├── runner.go              # Agent 核心循环
+    │   └── subagent.go            # 子 Agent 委托（单任务 + 并行）
+    ├── sandbox/sandbox.go         # 进程级沙箱隔离
     ├── session/
     │   ├── session.go             # 会话管理
     │   └── export.go              # 对话导出/导入（JSON + Markdown）
     ├── skill/skill.go             # Skill 加载器
     └── tool/                      # 工具系统
         ├── tool.go                # 接口 + 注册表
-        ├── builtin.go             # 7 个内置工具 + 安全工具函数
+        ├── builtin.go             # 8 个内置工具 + 安全工具函数
         ├── exec_unix.go           # Unix 命令执行（进程组隔离）
         ├── exec_windows.go        # Windows 命令执行
         ├── git.go                 # 4 个 Git 工具
@@ -403,10 +460,12 @@ require gopkg.in/yaml.v3 v3.0.1
 | 并行工具执行 | ✅ 已完成（goroutine + WaitGroup） |
 | 多模型路由策略 | ✅ 已完成（fast/balanced/powerful 自动分级） |
 | 对话导出/导入 | ✅ 已完成（JSON + Markdown） |
-| 子 Agent 委托 | ⏳ 待实现 |
-| 向量数据库集成 | ⏳ 待实现 |
+| MCP 协议支持 | ✅ 已完成（stdio / HTTP SSE / Streamable HTTP） |
+| 子 Agent 委托 | ✅ 已完成（单任务 + 并行，最多 5 个子 Agent） |
+| WebSocket 实时通信 | ✅ 已完成（纯标准库 RFC 6455） |
+| 向量语义记忆 | ✅ 已完成（Embedding + 余弦相似度 + 自动降级） |
+| 进程沙箱隔离 | ✅ 已完成（临时目录 + 最小环境变量） |
 | Web UI | ⏳ 待实现 |
-| MCP 协议支持 | ⏳ 待实现 |
 
 ## 许可证
 

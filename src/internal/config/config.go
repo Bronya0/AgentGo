@@ -25,6 +25,7 @@ type Config struct {
 	Memory            MemoryConfig     `yaml:"memory"`
 	Channels          ChannelsConfig   `yaml:"channels"` // 聊天渠道配置
 	ACL               ACLConfig        `yaml:"acl"`      // 访问控制配置
+	MCP               MCPConfig        `yaml:"mcp"`      // MCP 协议配置
 }
 
 // GatewayConfig 配置 HTTP 网关。
@@ -53,8 +54,11 @@ type CronJobConfig struct {
 
 // MemoryConfig 配置内存检索。
 type MemoryConfig struct {
-	Dir     string `yaml:"dir"`
-	Enabled bool   `yaml:"enabled"`
+	Dir             string `yaml:"dir"`
+	Enabled         bool   `yaml:"enabled"`
+	EmbeddingModel  string `yaml:"embedding_model"`   // embedding 模型（空则不启用向量搜索）
+	EmbeddingURL    string `yaml:"embedding_url"`     // embedding API 地址（默认复用 provider）
+	EmbeddingAPIKey string `yaml:"embedding_api_key"` // embedding API key（默认复用 provider）
 }
 
 // ChannelsConfig 聊天渠道总配置。
@@ -99,6 +103,12 @@ type ACLConfig struct {
 	AllowUsers    []string `yaml:"allow_users"`     // 白名单
 	DenyUsers     []string `yaml:"deny_users"`      // 黑名单
 	DenyTools     []string `yaml:"deny_tools"`      // 非管理员禁用的工具
+}
+
+// MCPConfig MCP 协议服务端配置。
+type MCPConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Mode    string `yaml:"mode"` // "http"（默认）或 "stdio"
 }
 
 // Load 从 YAML 文件加载配置并应用默认值。

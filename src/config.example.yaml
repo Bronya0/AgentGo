@@ -66,6 +66,20 @@ skill_dirs:
 memory:
   enabled: false
   dir: ".agent/memory"
+  # 向量语义搜索（可选，需要 Embedding API）
+  # 启用后 memory_search 将使用 cosine 相似度进行语义匹配
+  # 未配置时自动降级为关键词搜索
+  embedding_model: ""          # Embedding 模型名（如 text-embedding-3-small）
+  embedding_url: ""            # Embedding API 地址（如 https://api.openai.com/v1）
+  embedding_api_key: ""        # Embedding API Key
+
+# MCP 协议（Model Context Protocol）
+# 启用后，Agent 可作为 MCP Server 被外部客户端（如 VS Code Copilot）调用
+mcp:
+  enabled: false
+  mode: http                   # stdio（标准输入输出）或 http（HTTP SSE + Streamable HTTP）
+  # stdio 模式：通过 stdin/stdout 进行 JSON-RPC 2.0 通信，适合编辑器集成
+  # http 模式：注册 /mcp 路由到 Gateway，支持 SSE 和 Streamable HTTP 两种传输
 
 # 聊天渠道配置
 # 启用后，用户可通过聊天软件直接与 Agent 交互
