@@ -1,10 +1,7 @@
 // Package ratelimit 提供基于令牌桶算法的请求速率限制。
 //
-// 支持：
-//   - 全局速率限制（每秒最大请求数）
-//   - 按用户/IP 分别限制
-//   - Token 配额管理（每用户每日/总量消耗上限）
-//   - 自动清理过期条目
+// 速率限制使用 golang.org/x/time/rate 标准实现；
+// token 配额管理（每用户每日上限）为业务逻辑，自行维护。
 package ratelimit
 
 import (
@@ -12,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // Config 是速率限制配置。
@@ -23,25 +22,25 @@ type Config struct {
 	QuotaWindow    string  `yaml:"quota_window"`      // 配额窗口：daily（默认）
 }
 
-// Limiter 是速率限制器。
-type Limiter struct {
-	cfg     Config
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	quotas  map[string]*quota
-}
-
-type bucket struct {
-	tokens   float64
-	capacity float64
-	rate     float64 // tokens per second
-	lastTime time.Time
-}
-
+// quota 跟踪每用户的 token 消耗配额。
 type quota struct {
 	used      int
 	limit     int
 	windowEnd time.Time
+}
+
+// entry 持有某个 key 对应的限流器及最后使用时间。
+type entry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// Limiter 是速率限制器。
+type Limiter struct {
+	cfg     Config
+	mu      sync.Mutex
+	clients map[string]*entry
+	quotas  map[string]*quota
 }
 
 // New 创建一个 Limiter。
@@ -54,7 +53,7 @@ func New(cfg Config) *Limiter {
 	}
 	l := &Limiter{
 		cfg:     cfg,
-		buckets: make(map[string]*bucket),
+		clients: make(map[string]*entry),
 		quotas:  make(map[string]*quota),
 	}
 	go l.cleanup()
@@ -69,34 +68,18 @@ func (l *Limiter) Allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	b, ok := l.buckets[key]
+	e, ok := l.clients[key]
 	if !ok {
-		b = &bucket{
-			tokens:   float64(l.cfg.Burst),
-			capacity: float64(l.cfg.Burst),
-			rate:     l.cfg.RequestsPerSec,
-			lastTime: time.Now(),
+		e = &entry{
+			limiter: rate.NewLimiter(rate.Limit(l.cfg.RequestsPerSec), l.cfg.Burst),
 		}
-		l.buckets[key] = b
+		l.clients[key] = e
 	}
-
-	now := time.Now()
-	elapsed := now.Sub(b.lastTime).Seconds()
-	b.tokens += elapsed * b.rate
-	if b.tokens > b.capacity {
-		b.tokens = b.capacity
-	}
-	b.lastTime = now
-
-	if b.tokens < 1 {
-		return false
-	}
-	b.tokens--
-	return true
+	e.lastSeen = time.Now()
+	return e.limiter.Allow()
 }
 
 // ConsumeTokens 消耗 token 配额，返回是否在配额内。
-// tokens 参数为本次消耗的 token 数。
 func (l *Limiter) ConsumeTokens(key string, tokens int) bool {
 	if !l.cfg.Enabled || l.cfg.TokenQuota <= 0 {
 		return true
@@ -120,10 +103,10 @@ func (l *Limiter) ConsumeTokens(key string, tokens int) bool {
 	return true
 }
 
-// TokensRemaining 返回 key 剩余的 token 配额。
+// TokensRemaining 返回 key 剩余的 token 配额（-1 表示不限）。
 func (l *Limiter) TokensRemaining(key string) int {
 	if !l.cfg.Enabled || l.cfg.TokenQuota <= 0 {
-		return -1 // -1 表示不限
+		return -1
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -132,11 +115,10 @@ func (l *Limiter) TokensRemaining(key string) int {
 	if !ok || time.Now().After(q.windowEnd) {
 		return l.cfg.TokenQuota
 	}
-	remaining := q.limit - q.used
-	if remaining < 0 {
-		remaining = 0
+	if remaining := q.limit - q.used; remaining > 0 {
+		return remaining
 	}
-	return remaining
+	return 0
 }
 
 // Middleware 返回一个 HTTP 中间件，自动按客户端 IP 限流。
@@ -157,7 +139,6 @@ func (l *Limiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
 
 // clientIP 提取客户端 IP。
 func clientIP(r *http.Request) string {
-	// 优先从 X-Forwarded-For 取第一个 IP
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if ip, _, ok := strings.Cut(xff, ","); ok {
 			return strings.TrimSpace(ip)
@@ -167,7 +148,6 @@ func clientIP(r *http.Request) string {
 	if xri := r.Header.Get("X-Real-Ip"); xri != "" {
 		return strings.TrimSpace(xri)
 	}
-	// 回退到 RemoteAddr
 	addr := r.RemoteAddr
 	if i := strings.LastIndex(addr, ":"); i != -1 {
 		return addr[:i]
@@ -175,21 +155,21 @@ func clientIP(r *http.Request) string {
 	return addr
 }
 
-// nextWindow 返回下一个配额窗口结束时间（当日 23:59:59）。
+// nextWindow 返回下一个配额窗口结束时间（次日 00:00:00）。
 func nextWindow() time.Time {
 	now := time.Now()
 	return time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 }
 
-// cleanup 每 5 分钟清理 10 分钟未使用的桶。
+// cleanup 每 5 分钟清理 10 分钟未使用的条目。
 func (l *Limiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	for range ticker.C {
 		l.mu.Lock()
 		now := time.Now()
-		for key, b := range l.buckets {
-			if now.Sub(b.lastTime) > 10*time.Minute {
-				delete(l.buckets, key)
+		for key, e := range l.clients {
+			if now.Sub(e.lastSeen) > 10*time.Minute {
+				delete(l.clients, key)
 			}
 		}
 		for key, q := range l.quotas {

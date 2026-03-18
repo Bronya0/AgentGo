@@ -7,6 +7,8 @@ const indexHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AgentGo Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 :root {
@@ -204,6 +206,69 @@ body {
 .btn-open { border-color: var(--accent); color: var(--accent); }
 .btn-open:hover { background: var(--accent); color: #fff; }
 
+/* abort button */
+.abort-btn {
+  width: 44px; height: 44px; border-radius: var(--radius); border: none;
+  background: var(--red); color: #fff; cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s; flex-shrink: 0;
+}
+.abort-btn:hover { background: #ef4444; }
+
+/* thinking animation */
+.thinking-indicator {
+  display: flex; gap: 5px; padding: 12px 16px; align-items: center;
+}
+.thinking-indicator span { font-size:13px; color:var(--text2); margin-right:6px; }
+.thinking-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent2);
+  animation: bounce 1.2s infinite;
+}
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce {
+  0%,60%,100% { transform: translateY(0); opacity:.6; }
+  30% { transform: translateY(-6px); opacity:1; }
+}
+
+/* think block (model reasoning) */
+.think-block {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; margin: 8px 0; font-size: 13px; overflow: hidden;
+}
+.think-block-header {
+  display: flex; align-items: center; gap: 6px; padding: 7px 12px;
+  cursor: pointer; user-select: none; color: var(--text2);
+}
+.think-block-header:hover { color: var(--text); }
+.think-chevron { transition: transform 0.2s; font-style: normal; }
+.think-block.open .think-chevron { transform: rotate(90deg); }
+.think-block-body {
+  display: none; padding: 8px 12px 10px; color: var(--text2);
+  font-style: italic; white-space: pre-wrap; line-height: 1.5;
+  border-top: 1px solid var(--border);
+  max-height: 300px; overflow-y: auto;
+}
+.think-block.open .think-block-body { display: block; }
+
+/* markdown output */
+.msg-assistant .msg-bubble h1,.msg-assistant .msg-bubble h2,
+.msg-assistant .msg-bubble h3 { margin: 8px 0 4px; font-weight:600; }
+.msg-assistant .msg-bubble ul,.msg-assistant .msg-bubble ol {
+  padding-left: 20px; margin: 4px 0;
+}
+.msg-assistant .msg-bubble li { margin: 2px 0; }
+.msg-assistant .msg-bubble table {
+  border-collapse: collapse; margin: 8px 0; width: 100%;
+}
+.msg-assistant .msg-bubble th,.msg-assistant .msg-bubble td {
+  border: 1px solid var(--border); padding: 5px 10px;
+}
+.msg-assistant .msg-bubble blockquote {
+  border-left: 3px solid var(--accent); margin: 8px 0; padding: 4px 12px;
+  color: var(--text2);
+}
+
 /* scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -257,7 +322,8 @@ body {
     <div class="chat-input-area">
       <div class="input-row">
         <textarea id="chatInput" placeholder="输入消息... (Shift+Enter 换行)" rows="1"></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()">▶</button>
+        <button class="abort-btn" id="abortBtn" onclick="abortMessage()" style="display:none" title="中止生成">■</button>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="发送">▶</button>
       </div>
     </div>
   </div>
@@ -286,6 +352,12 @@ let ws = null;
 let sessionId = 'default';
 let isGenerating = false;
 let currentAssistantEl = null;
+let currentRawText = '';  // 累计原始文本（用于整体重渲染）
+
+// 配置 marked
+if (typeof marked !== 'undefined') {
+  marked.setOptions({ breaks: true, gfm: true });
+}
 
 // --- Panel switch ---
 function switchPanel(name) {
@@ -313,7 +385,9 @@ function connectWS() {
     updateSendBtn();
     setTimeout(connectWS, 3000);
   };
-  ws.onerror = () => {};
+  ws.onerror = (e) => {
+    console.warn('WebSocket error', e);
+  };
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
@@ -338,43 +412,59 @@ function setStatus(connected) {
 function handleEvent(data) {
   switch (data.type) {
     case 'text':
+      removeThinkingIndicator();
       appendAssistantText(data.text);
       break;
     case 'tool_start':
+      removeThinkingIndicator();
       appendToolCard(data.tool, data.args, 'running');
       break;
     case 'tool_end':
       updateToolCard(data.tool, data.output);
       break;
     case 'done':
+    case 'aborted':
+      removeThinkingIndicator();
       isGenerating = false;
       currentAssistantEl = null;
-      updateSendBtn();
+      currentRawText = '';
+      updateInputArea();
+      if (data.type === 'aborted') appendSystemNote('已中止');
       break;
     case 'error':
+      removeThinkingIndicator();
       appendError(data.error);
       isGenerating = false;
       currentAssistantEl = null;
-      updateSendBtn();
+      currentRawText = '';
+      updateInputArea();
       break;
   }
 }
 
-// --- Send message ---
+// --- Send / Abort ---
 function sendMessage() {
   const input = document.getElementById('chatInput');
   const msg = input.value.trim();
   if (!msg || isGenerating || !ws || ws.readyState !== WebSocket.OPEN) return;
   appendUserMessage(msg);
-  ws.send(JSON.stringify({ message: msg }));
+  ws.send(JSON.stringify({ type: 'message', message: msg }));
   input.value = '';
   input.style.height = '44px';
   isGenerating = true;
-  updateSendBtn();
+  currentRawText = '';
+  updateInputArea();
+  appendThinkingIndicator();
 }
 
-function updateSendBtn() {
-  document.getElementById('sendBtn').disabled = isGenerating;
+function abortMessage() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'abort' }));
+}
+
+function updateInputArea() {
+  document.getElementById('sendBtn').style.display = isGenerating ? 'none' : '';
+  document.getElementById('abortBtn').style.display = isGenerating ? '' : 'none';
 }
 
 // --- Chat rendering ---
@@ -387,6 +477,57 @@ function appendUserMessage(text) {
   scrollToBottom();
 }
 
+// --- Thinking indicator ---
+function appendThinkingIndicator() {
+  removeThinkingIndicator();
+  const container = document.getElementById('chatMessages');
+  const el = document.createElement('div');
+  el.id = 'thinkingIndicator';
+  el.className = 'msg msg-assistant';
+  el.innerHTML = '<div class="msg-label">Agent</div>' +
+    '<div class="thinking-indicator">' +
+    '<span>思考中</span>' +
+    '<div class="thinking-dot"></div>' +
+    '<div class="thinking-dot"></div>' +
+    '<div class="thinking-dot"></div>' +
+    '</div>';
+  container.appendChild(el);
+  scrollToBottom();
+}
+function removeThinkingIndicator() {
+  const el = document.getElementById('thinkingIndicator');
+  if (el) el.remove();
+}
+
+// --- Markdown + think block rendering ---
+function renderMd(raw) {
+  if (!raw) return '';
+  // 提取 <think>...</think> 块
+  const thinks = [];
+  const cleaned = raw.replace(/<think>([\s\S]*?)<\/think>/gi, (_, c) => {
+    thinks.push(c.trim());
+    return '';
+  }).trim();
+
+  let html = '';
+  // 思考块（折叠显示）
+  thinks.forEach(t => {
+    html += '<div class="think-block">' +
+      '<div class="think-block-header" onclick="this.parentElement.classList.toggle(\'open\')">'+
+      '<em class="think-chevron">▶</em> <span>思考过程</span>' +
+      '</div>' +
+      '<div class="think-block-body">' + escapeHtml(t) + '</div>' +
+      '</div>';
+  });
+
+  // 主内容用 marked 渲染
+  if (cleaned) {
+    const md = (typeof marked !== 'undefined') ? marked.parse(cleaned) : escapeHtml(cleaned).replace(/\n/g, '<br>');
+    html += (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(md) : md;
+  }
+  return html;
+}
+
 function appendAssistantText(text) {
   if (!currentAssistantEl) {
     const container = document.getElementById('chatMessages');
@@ -396,24 +537,9 @@ function appendAssistantText(text) {
     container.appendChild(div);
     currentAssistantEl = div.querySelector('.msg-bubble');
   }
-  // simple markdown: code blocks
-  currentAssistantEl.innerHTML = renderMarkdown(currentAssistantEl.textContent + text);
-  currentAssistantEl.setAttribute('data-raw', (currentAssistantEl.getAttribute('data-raw') || '') + text);
+  currentRawText += text;
+  currentAssistantEl.innerHTML = renderMd(currentRawText);
   scrollToBottom();
-}
-
-function renderMarkdown(text) {
-  // code blocks
-  text = text.replace(/` + "`" + `` + "`" + `` + "`" + `(\w*)\n([\s\S]*?)` + "`" + `` + "`" + `` + "`" + `/g, function(_, lang, code) {
-    return '<pre><code>' + escapeHtml(code) + '</code></pre>';
-  });
-  // inline code
-  text = text.replace(/` + "`" + `([^` + "`" + `]+)` + "`" + `/g, '<code>$1</code>');
-  // bold
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // newlines
-  text = text.replace(/\n/g, '<br>');
-  return text;
 }
 
 function appendToolCard(name, args, status) {
@@ -458,6 +584,15 @@ function appendError(err) {
   const div = document.createElement('div');
   div.className = 'msg msg-assistant';
   div.innerHTML = '<div class="msg-label">错误</div><div class="msg-bubble" style="border:1px solid var(--red);color:var(--red)">' + escapeHtml(err) + '</div>';
+  container.appendChild(div);
+  scrollToBottom();
+}
+
+function appendSystemNote(text) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.style.cssText = 'text-align:center;font-size:12px;color:var(--text2);margin:8px 0;';
+  div.textContent = text;
   container.appendChild(div);
   scrollToBottom();
 }
@@ -556,6 +691,7 @@ chatInput.addEventListener('keydown', function(e) {
 });
 
 // --- Init ---
+updateInputArea();
 connectWS();
 loadSessions();
 </script>
