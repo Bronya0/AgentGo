@@ -23,9 +23,10 @@ type Config struct {
 	SystemPromptExtra string           `yaml:"system_prompt_extra"`
 	Crons             []CronJobConfig  `yaml:"crons"`
 	Memory            MemoryConfig     `yaml:"memory"`
-	Channels          ChannelsConfig   `yaml:"channels"` // 聊天渠道配置
-	ACL               ACLConfig        `yaml:"acl"`      // 访问控制配置
-	MCP               MCPConfig        `yaml:"mcp"`      // MCP 协议配置
+	Channels          ChannelsConfig   `yaml:"channels"`   // 聊天渠道配置
+	ACL               ACLConfig        `yaml:"acl"`        // 访问控制配置
+	MCP               MCPConfig        `yaml:"mcp"`        // MCP 协议配置
+	RateLimit         RateLimitConfig  `yaml:"rate_limit"` // 速率限制配置
 }
 
 // GatewayConfig 配置 HTTP 网关。
@@ -109,6 +110,14 @@ type ACLConfig struct {
 type MCPConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Mode    string `yaml:"mode"` // "http"（默认）或 "stdio"
+}
+
+// RateLimitConfig 速率限制配置。
+type RateLimitConfig struct {
+	Enabled        bool    `yaml:"enabled"`
+	RequestsPerSec float64 `yaml:"requests_per_sec"` // 每秒最大请求数（per IP/用户）
+	Burst          int     `yaml:"burst"`             // 突发容量
+	TokenQuota     int     `yaml:"token_quota"`       // 每用户每日 token 配额（0 = 不限）
 }
 
 // Load 从 YAML 文件加载配置并应用默认值。

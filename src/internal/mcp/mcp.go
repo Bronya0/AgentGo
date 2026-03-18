@@ -8,9 +8,10 @@
 //   - SSE:   通过 HTTP Server-Sent Events 通信（适合远程调用）
 //
 // MCP JSON-RPC 2.0 消息格式：
-//   请求:  {"jsonrpc":"2.0","id":1,"method":"...","params":{...}}
-//   响应:  {"jsonrpc":"2.0","id":1,"result":{...}}
-//   通知:  {"jsonrpc":"2.0","method":"...","params":{...}}
+//
+//	请求:  {"jsonrpc":"2.0","id":1,"method":"...","params":{...}}
+//	响应:  {"jsonrpc":"2.0","id":1,"result":{...}}
+//	通知:  {"jsonrpc":"2.0","method":"...","params":{...}}
 package mcp
 
 import (

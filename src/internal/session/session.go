@@ -145,3 +145,14 @@ func (p *Pool) Get(id string) *Session {
 	p.sessions[id] = s
 	return s
 }
+
+// ListIDs 返回所有活跃会话的 ID 列表。
+func (p *Pool) ListIDs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ids := make([]string, 0, len(p.sessions))
+	for id := range p.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}

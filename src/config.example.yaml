@@ -169,3 +169,13 @@ acl:
 #   - id: daily-summary
 #     schedule: "every 24h"
 #     prompt: "生成今日工作总结"
+
+# 速率限制
+# 基于令牌桶算法，按 IP/用户进行请求限流，防止 API 滥用
+rate_limit:
+  enabled: false
+  requests_per_sec: 10           # 每秒最大请求数（per IP）
+  burst: 20                      # 突发容量
+  token_quota: 0                 # 每用户每日 token 配额（0 = 不限制）
+  # 示例：限制每个用户每天最多消耗 100 万 token
+  # token_quota: 1000000

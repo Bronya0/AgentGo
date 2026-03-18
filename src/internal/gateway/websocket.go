@@ -4,11 +4,12 @@
 //
 // 握手后客户端发送 JSON 文本帧：{"message":"..."}
 // 服务端推送 JSON 文本帧，格式与 SSE 事件相同：
-//   {"type":"text","text":"..."}
-//   {"type":"tool_start","tool":"...","args":"..."}
-//   {"type":"tool_end","tool":"...","output":"..."}
-//   {"type":"done"}
-//   {"type":"error","error":"..."}
+//
+//	{"type":"text","text":"..."}
+//	{"type":"tool_start","tool":"...","args":"..."}
+//	{"type":"tool_end","tool":"...","output":"..."}
+//	{"type":"done"}
+//	{"type":"error","error":"..."}
 //
 // 使用纯标准库实现 WebSocket（RFC 6455），无需外部依赖。
 package gateway

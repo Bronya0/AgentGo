@@ -97,7 +97,19 @@ mcp:
 - **HTTP SSE 模式**：`GET /mcp` 建立 SSE 流 + `POST /mcp` 发送请求
 - **Streamable HTTP 模式**：`POST /mcp` 直接返回 JSON 响应
 
-支持的 MCP 方法：`initialize`、`tools/list`、`tools/call`、`ping`### 对话导出/导入
+支持的 MCP 方法：`initialize`、`tools/list`、`tools/call`、`ping`
+
+### Web UI 仪表盘
+
+启动服务后访问 `http://localhost:8080/ui` 即可使用内置 Web UI：
+
+- **对话界面**：通过 WebSocket 实时交互，支持 Markdown 渲染、工具调用可视化
+- **系统概览**：查看版本信息、已注册工具列表、活跃会话数
+- **会话管理**：浏览所有会话、切换对话、重置会话
+
+Web UI 使用纯 HTML/CSS/JS 内嵌到 Go 二进制中，无需额外静态文件部署。
+
+### 对话导出/导入
 
 ```bash
 # 导出为 JSON（可精确还原）
@@ -149,6 +161,8 @@ ACL 工具级权限检查 → 执行工具调用（若有）
 | **Memory** | 长期记忆，支持关键词检索和向量语义搜索 |
 | **Sandbox** | 进程级沙箱隔离（临时目录 + 最小环境变量 + 输出限制） |
 | **Cron** | 定时任务调度（支持固定间隔和每日定时，运行时动态增删） |
+| **RateLimit** | 令牌桶限流 + 每日 Token 配额管理 |
+| **WebUI** | 内嵌 Web 仪表盘（对话界面 + 系统概览 + 会话管理） |
 | **Lane** | 命令队列，保证串行执行 |
 
 ## 工具列表
@@ -361,12 +375,14 @@ crons:
 - 工具调用循环检测（阻止无限循环）
 - 优雅关闭（等待进行中的请求完成）
 - Session Lock 自动 GC（防止内存泄漏）
+- **速率限制**：令牌桶算法 per-IP 限流 + 每日 Token 配额管理
 
 ### 可扩展性
 - 插件系统（5 个 Hook 点）
 - 自定义工具注册
 - 配置文件环境变量展开
 - SKILL.md 能力注入
+- **内置 Web UI**：开箱即用的对话界面 + 系统概览 + 会话管理
 - 跨平台支持（Windows / Linux / macOS）
 - 聊天渠道适配器（可扩展更多平台）
 
@@ -406,6 +422,7 @@ src/
     │   ├── openai.go              # OpenAI 兼容客户端
     │   ├── failover.go            # 多 Provider 故障转移
     │   └── router.go              # 多模型智能路由
+    ├── ratelimit/ratelimit.go     # 令牌桶限流 + Token 配额
     ├── runner/
     │   ├── runner.go              # Agent 核心循环
     │   └── subagent.go            # 子 Agent 委托（单任务 + 并行）
@@ -414,6 +431,9 @@ src/
     │   ├── session.go             # 会话管理
     │   └── export.go              # 对话导出/导入（JSON + Markdown）
     ├── skill/skill.go             # Skill 加载器
+    ├── webui/                     # Web UI 仪表盘
+    │   ├── webui.go               # 路由 + API
+    │   └── index.go               # 内嵌 HTML 单页应用
     └── tool/                      # 工具系统
         ├── tool.go                # 接口 + 注册表
         ├── builtin.go             # 8 个内置工具 + 安全工具函数
@@ -465,7 +485,8 @@ require gopkg.in/yaml.v3 v3.0.1
 | WebSocket 实时通信 | ✅ 已完成（纯标准库 RFC 6455） |
 | 向量语义记忆 | ✅ 已完成（Embedding + 余弦相似度 + 自动降级） |
 | 进程沙箱隔离 | ✅ 已完成（临时目录 + 最小环境变量） |
-| Web UI | ⏳ 待实现 |
+| Web UI 仪表盘 | ✅ 已完成（对话 + 概览 + 会话管理） |
+| 速率限制 | ✅ 已完成（令牌桶 + Token 配额） |
 
 ## 许可证
 

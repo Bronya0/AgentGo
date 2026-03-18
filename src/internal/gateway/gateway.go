@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bronya/mini-agent/internal/ratelimit"
 	"github.com/bronya/mini-agent/internal/runner"
 	"github.com/bronya/mini-agent/internal/session"
 )
@@ -51,20 +52,22 @@ type Server struct {
 	sessions    *session.Pool
 	sessionLock *sessionLockMap
 	token       string
+	limiter     *ratelimit.Limiter
 	mux         *http.ServeMux
 	httpSrv     *http.Server
 }
 
 // New 创建一个 Server。
-func New(r *runner.Runner, sessions *session.Pool, addr, token string) *Server {
+func New(r *runner.Runner, sessions *session.Pool, addr, token string, limiter *ratelimit.Limiter) *Server {
 	s := &Server{
 		runner:      r,
 		sessions:    sessions,
 		sessionLock: newSessionLockMap(),
 		token:       token,
+		limiter:     limiter,
 	}
 	s.mux = http.NewServeMux()
-	s.mux.HandleFunc("/v1/chat", s.authMiddleware(s.handleChat))
+	s.mux.HandleFunc("/v1/chat", s.authMiddleware(s.limiter.Middleware(s.handleChat)))
 	s.mux.HandleFunc("/v1/ws", s.authMiddleware(s.handleWebSocket))
 	s.mux.HandleFunc("/v1/session/export", s.authMiddleware(s.handleExport))
 	s.mux.HandleFunc("/v1/session/import", s.authMiddleware(s.handleImport))
