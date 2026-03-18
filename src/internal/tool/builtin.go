@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -355,13 +353,9 @@ func RunCommand(workspaceDir string) Tool {
 			tCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec*float64(time.Second)))
 			defer cancel()
 
-			cmd := exec.CommandContext(tCtx, "sh", "-c", command)
+			cmd := buildShellCommand(tCtx, command)
 			cmd.Dir = workspaceDir
-			// 使用独立进程组，超时时终止所有子进程
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			cmd.Cancel = func() error {
-				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
+			setProcAttr(cmd)
 
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
