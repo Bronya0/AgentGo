@@ -40,6 +40,23 @@ type Channel interface {
 	RegisterRoutes(mux *http.ServeMux)
 }
 
+// FeedbackCapable 是支持实时反馈的渠道（可选实现）。
+type FeedbackCapable interface {
+	// SendTyping 发送"正在输入"指示器。
+	SendTyping(ctx context.Context, userID string) error
+	// SendStatus 发送状态反馈（如处理中/完成/失败的 emoji 反应）。
+	SendStatus(ctx context.Context, userID, messageID string, status Status) error
+}
+
+// Status 表示消息处理状态。
+type Status string
+
+const (
+	StatusProcessing Status = "processing" // 处理中
+	StatusDone       Status = "done"       // 完成
+	StatusError      Status = "error"      // 失败
+)
+
 // Handler 封装 Agent Runner 和 Session 池，供各个 Channel 共用。
 type Handler struct {
 	Runner   *runner.Runner
@@ -48,7 +65,8 @@ type Handler struct {
 }
 
 // HandleMessage 处理来自任意渠道的消息，返回 Agent 的完整文本回复。
-func (h *Handler) HandleMessage(ctx context.Context, msg Message) string {
+// 若 channel 实现了 FeedbackCapable，会自动发送 typing 指示器和状态反馈。
+func (h *Handler) HandleMessage(ctx context.Context, msg Message, ch Channel) string {
 	// ACL 用户级权限检查
 	if h.ACL != nil && !h.ACL.CanAccess(msg.Platform, msg.UserID) {
 		slog.Warn("channel: access denied",
@@ -71,11 +89,21 @@ func (h *Handler) HandleMessage(ctx context.Context, msg Message) string {
 		UserID:   msg.UserID,
 	})
 
+	// 发送 typing 指示器（若渠道支持）
+	if fc, ok := ch.(FeedbackCapable); ok {
+		_ = fc.SendTyping(ctx, msg.UserID)
+	}
+
 	var reply string
 	err := h.Runner.Run(ctx, sess, msg.Content, func(chunk runner.StreamChunk) {
 		switch chunk.Event {
 		case runner.EventText:
 			reply += chunk.Text
+		case runner.EventToolStart:
+			// 工具执行中持续发送 typing
+			if fc, ok := ch.(FeedbackCapable); ok {
+				_ = fc.SendTyping(ctx, msg.UserID)
+			}
 		case runner.EventError:
 			if chunk.Err != nil {
 				slog.Error("channel message error",
@@ -86,6 +114,16 @@ func (h *Handler) HandleMessage(ctx context.Context, msg Message) string {
 			}
 		}
 	})
+
+	// 发送状态反馈
+	if fc, ok := ch.(FeedbackCapable); ok {
+		if err != nil {
+			_ = fc.SendStatus(ctx, msg.UserID, "", StatusError)
+		} else {
+			_ = fc.SendStatus(ctx, msg.UserID, "", StatusDone)
+		}
+	}
+
 	if err != nil {
 		slog.Error("channel run failed",
 			"platform", msg.Platform,

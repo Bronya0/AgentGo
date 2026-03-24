@@ -198,10 +198,33 @@ func (o *OpenAI) buildRequest(messages []Message, tools []ToolDefinition, stream
 
 	for _, m := range messages {
 		msg := goai.ChatCompletionMessage{
-			Role:       string(m.Role),
-			Content:    m.Content,
+			Role:             string(m.Role),
 			ReasoningContent: m.Reasoning,
-			ToolCallID: m.ToolCallID,
+			ToolCallID:       m.ToolCallID,
+		}
+		// 多模态内容：若有 ContentParts，使用 MultiContent 模式
+		if len(m.ContentParts) > 0 {
+			var parts []goai.ChatMessagePart
+			for _, p := range m.ContentParts {
+				switch p.Type {
+				case "image_url":
+					parts = append(parts, goai.ChatMessagePart{
+						Type: goai.ChatMessagePartTypeImageURL,
+						ImageURL: &goai.ChatMessageImageURL{
+							URL:    p.ImageURL,
+							Detail: goai.ImageURLDetailAuto,
+						},
+					})
+				default:
+					parts = append(parts, goai.ChatMessagePart{
+						Type: goai.ChatMessagePartTypeText,
+						Text: p.Text,
+					})
+				}
+			}
+			msg.MultiContent = parts
+		} else {
+			msg.Content = m.Content
 		}
 		for _, tc := range m.ToolCalls {
 			msg.ToolCalls = append(msg.ToolCalls, goai.ToolCall{

@@ -146,7 +146,7 @@ func (c *Channel) handleCallback(w http.ResponseWriter, r *http.Request) {
 			Content:   content,
 			SessionID: "dingtalk-" + conversationID,
 			Platform:  "dingtalk",
-		})
+		}, c)
 
 		// 优先使用 sessionWebhook 回复（有效期内）
 		if sessionWebhook != "" {

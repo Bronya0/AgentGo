@@ -354,17 +354,21 @@ YAML 配置文件加载。
 | CommandQueue / Lane | `lane.Lane` + `Manager` | 完整 |
 | Plugin Hook 系统 | `plugin.Hooks`（5 个 hook 点） | 完整 |
 | Session 持久化 | `session.Pool` + JSON | 完整 |
-| CronService | `cron.Service` | 基础 |
-| Memory search | `memory.Store` 关键词检索 | 基础 |
+| CronService | `cron.Service`（含执行日志 + 错误通知） | 完整 |
+| Memory search | `memory.Store` 关键词检索 + 向量可选 | 完整 |
 | Gateway SSE | `gateway.Server` — `/v1/chat` | 完整 |
 | Context 截断 | `runner.trimHistory()` | 完整 |
 | 工具安全沙箱 | `safeJoin()` + SSRF + 进程组 | 完整 |
 | tool-loop-detection | `loopDetector` | 完整 |
-| Context compaction (LLM 摘要) | — | 未实现 |
-| 子 Agent 委托 | — | 未实现 |
-| 向量记忆检索 | — | 未实现 |
-| 多模态（图片/音频） | — | 未实现 |
-| MCP 协议 | — | 未实现 |
+| Context compaction (LLM 摘要) | `runner.maybeCompress()` — 安全截断 + 标识符保留 | 完整 |
+| 子 Agent 委托 | `runner.SubAgentTools()` — delegate + parallel | 完整 |
+| 向量记忆检索 | `memory.VectorStore` — 可选 embedding + 余弦相似度 | 完整 |
+| 多模态（图片理解） | `tool.ImageUnderstand()` — 本地文件 + URL → Vision API | 完整 |
+| MCP 协议 | `mcp.Server` — JSON-RPC 2.0（stdio + SSE） | 完整 |
+| Web 搜索 | `tool.WebSearch()` — Brave / SearXNG | 完整 |
+| 命令执行审批 | `runner.ExecApprovalFn` — 可选回调 | 完整 |
+| Bootstrap 文件注入 | `runner.LoadBootstrapFiles()` — AGENT.md/CLAUDE.md | 完整 |
+| 渠道实时反馈 | `channel.FeedbackCapable` — typing + 状态指示 | 完整 |
 
 ---
 
@@ -378,20 +382,38 @@ src/
 └── internal/
     ├── config/config.go              # 配置加载（YAML + 环境变量展开）
     ├── provider/
-    │   ├── provider.go               # Provider 接口 + Message + ToolCall 类型
-    │   ├── openai.go                 # OpenAI 兼容客户端（流式 + 重试）
-    │   └── failover.go              # 多 Provider 自动切换
+    │   ├── provider.go               # Provider 接口 + Message + ContentPart（多模态）
+    │   ├── openai.go                 # OpenAI 兼容客户端（流式 + 重试 + Vision）
+    │   ├── failover.go              # 多 Provider 自动切换
+    │   └── router.go                # 智能路由（按任务复杂度分层）
     ├── tool/
     │   ├── tool.go                   # Tool 接口 + Registry
-    │   └── builtin.go               # 7 个内置工具
+    │   ├── builtin.go               # 8 个内置工具
+    │   ├── websearch.go             # Web 搜索工具（Brave / SearXNG）
+    │   ├── vision.go                # 图片理解工具（Vision API）
+    │   ├── git.go                   # Git 操作工具
+    │   ├── notify.go                # Webhook 通知工具
+    │   └── cron.go                  # 动态 Cron 管理工具
     ├── session/session.go            # 会话管理 + Pool + 持久化
-    ├── runner/runner.go              # Agent 核心循环 + 循环检测
+    ├── runner/
+    │   ├── runner.go                # Agent 核心循环 + Context Compaction + 审批
+    │   ├── subagent.go              # 子 Agent 委托 + 并行任务
+    │   └── bootstrap.go             # Bootstrap 文件自动注入
     ├── plugin/plugin.go              # Hook 系统 + Plugin 接口
     ├── skill/skill.go                # SKILL.md 加载 + frontmatter
     ├── lane/lane.go                  # 命令队列
-    ├── cron/cron.go                  # 定时任务
-    ├── memory/memory.go              # 文本记忆检索
-    └── gateway/gateway.go            # HTTP API (SSE)
+    ├── cron/cron.go                  # 定时任务（含执行日志 + 错误通知）
+    ├── memory/
+    │   ├── memory.go                # 关键词记忆检索
+    │   └── vector.go                # 向量增强记忆（可选 embedding）
+    ├── channel/
+    │   ├── channel.go               # 渠道接口 + FeedbackCapable
+    │   ├── wecom/                   # 企业微信
+    │   ├── dingtalk/                # 钉钉
+    │   └── feishu/                  # 飞书
+    ├── mcp/mcp.go                    # MCP 协议服务端
+    ├── gateway/gateway.go            # HTTP API (SSE + WebSocket)
+    └── webui/                        # Web 管理界面
 ```
 
-**外部依赖**：仅 `gopkg.in/yaml.v3`（YAML 解析）。
+**外部依赖**：`gopkg.in/yaml.v3`（YAML），`github.com/sashabaranov/go-openai`（OpenAI SDK），`github.com/robfig/cron/v3`（Cron）。

@@ -48,6 +48,10 @@ type StreamChunk struct {
 	Err      error
 }
 
+// ExecApprovalFn 是命令审批回调。返回 true 允许执行，false 拒绝。
+// 当为 nil 时，所有非危险命令自动通过（危险命令仍被 checkCommandSafety 拦截）。
+type ExecApprovalFn func(ctx context.Context, toolName string, args tool.Args) (bool, error)
+
 // Runner 驱动 Agent 的核心循环。
 type Runner struct {
 	provider     provider.Provider
@@ -57,6 +61,7 @@ type Runner struct {
 	systemPrompt string
 	maxTurns     int // 最大循环次数（防无限循环），默认 32
 	maxTokens    int // 上下文 token 上限（超出时截断旧消息）
+	execApproval ExecApprovalFn // 可选，命令审批回调
 }
 
 // Config 是 Runner 的配置。
@@ -68,6 +73,7 @@ type Config struct {
 	SystemPrompt string
 	MaxTurns     int
 	MaxTokens    int
+	ExecApproval ExecApprovalFn // 可选，命令执行审批回调
 }
 
 // New 创建一个 Runner。
@@ -89,6 +95,7 @@ func New(cfg Config) *Runner {
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     cfg.MaxTurns,
 		maxTokens:    cfg.MaxTokens,
+		execApproval: cfg.ExecApproval,
 	}
 }
 
@@ -246,6 +253,19 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ToolCall, handler 
 		args = make(tool.Args)
 	}
 
+	// Exec 审批：对 run_command 类工具，若配置了审批回调则请求确认
+	if r.execApproval != nil && isExecTool(tc.Name) {
+		approved, approvalErr := r.execApproval(ctx, tc.Name, args)
+		if approvalErr != nil {
+			result = tool.Errf("exec approval error: %v", approvalErr)
+			return result
+		}
+		if !approved {
+			result = tool.Errf("command execution was denied by approval policy")
+			return result
+		}
+	}
+
 	// Hook: before_tool_call
 	args = r.hooks.BeforeToolCall(ctx, tc.Name, args)
 
@@ -260,7 +280,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ToolCall, handler 
 
 	// 防止 tool result 过大
 	const maxResultChars = 32 * 1024
-	if len(result.Content) > maxResultChars {
+	if len(result.Content) > maxResultChars && !strings.HasPrefix(result.Content, "[IMAGE_VISION]") {
 		result.Content = result.Content[:maxResultChars] + "\n...[truncated]"
 	}
 
@@ -283,6 +303,7 @@ func (r *Runner) buildToolDefs() []provider.ToolDefinition {
 }
 
 // buildMessages 构建发送给 LLM 的消息列表，含 system prompt、压缩摘要和上下文截断。
+// 同时处理 [IMAGE_VISION] 标记，将图片 data URI 转为多模态消息。
 func (r *Runner) buildMessages(sess *session.Session) []provider.Message {
 	history := sess.History()
 	summary := sess.GetSummary()
@@ -305,12 +326,53 @@ func (r *Runner) buildMessages(sess *session.Session) []provider.Message {
 		})
 	}
 
-	// 上下文截断：若估算 token 超限，保留最近的消息
-	messages = append(messages, r.trimHistory(history)...)
+	// 上下文截断 + 图片 vision 转换
+	trimmed := r.trimHistory(history)
+	for i, msg := range trimmed {
+		if msg.Role == provider.RoleTool && strings.HasPrefix(msg.Content, "[IMAGE_VISION]") {
+			question, dataURI := parseVisionMarker(msg.Content)
+			// 将 tool result 替换为简短文本，然后在后续插入一条 user 消息携带图片
+			trimmed[i].Content = fmt.Sprintf("[Image provided for analysis. Question: %s]", question)
+			// 查找是否可以追加 user vision 消息
+			if dataURI != "" {
+				// 在当前消息序列末尾追加 vision 请求
+				messages = append(messages, trimmed[:i+1]...)
+				messages = append(messages, provider.Message{
+					Role: provider.RoleUser,
+					ContentParts: []provider.ContentPart{
+						{Type: "text", Text: question},
+						{Type: "image_url", ImageURL: dataURI},
+					},
+				})
+				messages = append(messages, trimmed[i+1:]...)
+				return messages
+			}
+		}
+	}
+
+	messages = append(messages, trimmed...)
 	return messages
 }
 
+// parseVisionMarker 解析 [IMAGE_VISION] 标记。
+func parseVisionMarker(content string) (question, dataURI string) {
+	lines := strings.SplitN(content, "\n", 4)
+	for _, line := range lines {
+		if strings.HasPrefix(line, "question=") {
+			question = strings.TrimPrefix(line, "question=")
+		}
+		if strings.HasPrefix(line, "data_uri=") {
+			dataURI = strings.TrimPrefix(line, "data_uri=")
+		}
+	}
+	if question == "" {
+		question = "Describe this image."
+	}
+	return
+}
+
 // maybeCompress 在上下文接近 token 上限时，通过 LLM 对较早的消息进行摘要压缩。
+// 参考 OpenClaw compaction：按 token 份额分块摘要，保留关键标识符和活跃任务状态。
 func (r *Runner) maybeCompress(ctx context.Context, sess *session.Session) {
 	estimate := sess.TokenEstimate()
 	threshold := r.maxTokens * 70 / 100
@@ -319,25 +381,43 @@ func (r *Runner) maybeCompress(ctx context.Context, sess *session.Session) {
 	}
 
 	history := sess.History()
-	half := len(history) / 2
-	if half < 4 {
+	// 找到安全的压缩截断点：不破坏 tool_use / tool_result 配对
+	cutIdx := findCompactionCut(history)
+	if cutIdx < 4 {
 		return // 消息太少，不值得压缩
 	}
 
-	// 构建摘要请求：将前半部分对话传给 LLM
+	// 安全超时：compaction 不能阻塞主流程太久
+	compactCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	// 构建摘要请求
 	var sb strings.Builder
-	sb.WriteString("Summarize the following conversation concisely in the same language the user used. ")
-	sb.WriteString("Preserve key facts, decisions, code snippets, file paths, and any context needed for continuation:\n\n")
-	for _, m := range history[:half] {
+	sb.WriteString(compactionInstruction)
+	sb.WriteString("\n\n---\n\nConversation to summarize:\n\n")
+	for _, m := range history[:cutIdx] {
 		content := m.Content
-		if len(content) > 600 {
-			content = content[:600] + "...[truncated]"
+		if len(content) > 800 {
+			content = content[:800] + "...[truncated]"
 		}
-		fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, content)
+		if m.Role == provider.RoleTool {
+			// 工具结果只保留前 200 字符在摘要请求中
+			if len(content) > 200 {
+				content = content[:200] + "...[truncated tool output]"
+			}
+			fmt.Fprintf(&sb, "[tool_result id=%s]: %s\n", m.ToolCallID, content)
+		} else if len(m.ToolCalls) > 0 {
+			fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, content)
+			for _, tc := range m.ToolCalls {
+				fmt.Fprintf(&sb, "  → tool_call: %s(%s)\n", tc.Name, truncateStr(tc.Arguments, 150))
+			}
+		} else {
+			fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, content)
+		}
 	}
 
-	sumMsg, err := r.provider.Chat(ctx, []provider.Message{
-		{Role: provider.RoleSystem, Content: "You are a conversation summarizer. Produce a concise but thorough summary."},
+	sumMsg, err := r.provider.Chat(compactCtx, []provider.Message{
+		{Role: provider.RoleSystem, Content: "You are a conversation summarizer. Produce a concise but thorough summary. Respond in the same language the user used."},
 		{Role: provider.RoleUser, Content: sb.String()},
 	}, nil, nil)
 	if err != nil {
@@ -345,8 +425,53 @@ func (r *Runner) maybeCompress(ctx context.Context, sess *session.Session) {
 		return
 	}
 
-	sess.Compress(sumMsg.Content, half)
-	slog.Info("context compressed", "dropped", half, "remaining", len(history)-half, "summary_len", len(sumMsg.Content))
+	sess.Compress(sumMsg.Content, cutIdx)
+	slog.Info("context compressed", "dropped", cutIdx, "remaining", len(history)-cutIdx, "summary_len", len(sumMsg.Content))
+}
+
+// compactionInstruction 是 LLM 摘要的详细指令，参考 OpenClaw 的保留策略。
+const compactionInstruction = `Summarize the following conversation concisely. You MUST preserve:
+- Active tasks and their status (in-progress, blocked, pending, completed count like "5/17 done")
+- The last user request and current processing state
+- Key decisions and reasoning behind them
+- All file paths, code snippets, variable names, and function names mentioned
+- All identifiers: UUIDs, hashes, tokens, hostnames, IPs, URLs, branch names, commit SHAs
+- TODO items, open questions, constraints, and blockers
+- Tool call results that provided important data or changed state (file edits, command outputs)
+
+Do NOT include:
+- Redundant greetings or filler
+- Tool call results that were just informational queries with no lasting impact
+- Repeated attempts that ended in error before the final successful one`
+
+// findCompactionCut 找到安全的压缩截断索引。
+// 不能从 assistant(tool_calls) 和对应的 tool result 中间截断。
+func findCompactionCut(history []provider.Message) int {
+	half := len(history) / 2
+	if half < 4 {
+		return half
+	}
+	// 从 half 向前搜索安全截断点
+	for i := half; i > 2; i-- {
+		msg := history[i]
+		// 不在 tool result 处截断（需要保留对应的 assistant tool_call）
+		if msg.Role == provider.RoleTool {
+			continue
+		}
+		// 不在带 tool_calls 的 assistant 消息处截断（结果在后面）
+		if msg.Role == provider.RoleAssistant && len(msg.ToolCalls) > 0 {
+			continue
+		}
+		return i
+	}
+	return half // fallback
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // trimHistory 在 token 预算内保留尽可能多的最近消息。
@@ -462,4 +587,14 @@ func toolCallSignature(calls []provider.ToolCall) string {
 		parts[i] = c.Name + ":" + c.Arguments
 	}
 	return strings.Join(parts, "|")
+}
+
+// isExecTool 判断工具是否为命令执行类（需要审批）。
+func isExecTool(name string) bool {
+	switch name {
+	case "run_command", "run_command_sandboxed":
+		return true
+	default:
+		return false
+	}
 }

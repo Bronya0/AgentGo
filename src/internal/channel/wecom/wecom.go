@@ -179,7 +179,7 @@ func (c *Channel) handleCallback(w http.ResponseWriter, r *http.Request) {
 			UserID:   msg.FromUserName,
 			Content:  msg.Content,
 			Platform: "wecom",
-		})
+		}, c)
 
 		// 通过企微主动发消息 API 回复
 		if err := c.sendMessage(msg.FromUserName, reply); err != nil {

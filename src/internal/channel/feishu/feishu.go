@@ -215,7 +215,7 @@ func (c *Channel) handleCallback(w http.ResponseWriter, r *http.Request) {
 			Content:   text,
 			SessionID: "feishu-" + chatID,
 			Platform:  "feishu",
-		})
+		}, c)
 
 		if err := c.replyMessage(openID, reply); err != nil {
 			slog.Error("feishu: send reply failed", "user", openID, "err", err)

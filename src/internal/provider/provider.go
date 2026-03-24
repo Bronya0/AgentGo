@@ -18,11 +18,19 @@ const (
 
 // Message 是 LLM 对话中的一条消息。
 type Message struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Reasoning  string     `json:"reasoning,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"` // RoleTool 时的关联 ID
+	Role         Role          `json:"role"`
+	Content      string        `json:"content,omitempty"`
+	ContentParts []ContentPart `json:"content_parts,omitempty"` // 多模态内容（图片+文本）
+	Reasoning    string        `json:"reasoning,omitempty"`
+	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID   string        `json:"tool_call_id,omitempty"` // RoleTool 时的关联 ID
+}
+
+// ContentPart 是多模态消息中的一个内容片段。
+type ContentPart struct {
+	Type     string `json:"type"`               // "text" 或 "image_url"
+	Text     string `json:"text,omitempty"`      // type=text 时
+	ImageURL string `json:"image_url,omitempty"` // type=image_url 时，base64 data URI 或 URL
 }
 
 // ToolCall 表示 LLM 请求的一次工具调用。

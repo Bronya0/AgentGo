@@ -178,4 +178,12 @@ rate_limit:
   burst: 20                      # 突发容量
   token_quota: 0                 # 每用户每日 token 配额（0 = 不限制）
   # 示例：限制每个用户每天最多消耗 100 万 token
+
+# Web 搜索
+# 启用后 Agent 可通过 web_search 工具搜索实时信息
+web_search:
+  enabled: false
+  engine: brave                  # brave（推荐）或 searxng（自部署）
+  api_key: ""                    # Brave Search API Key（https://brave.com/search/api/）
+  base_url: ""                   # SearXNG 实例地址（仅 searxng 引擎时需要）
   # token_quota: 1000000

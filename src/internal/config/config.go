@@ -27,6 +27,7 @@ type Config struct {
 	ACL               ACLConfig        `yaml:"acl"`        // 访问控制配置
 	MCP               MCPConfig        `yaml:"mcp"`        // MCP 协议配置
 	RateLimit         RateLimitConfig  `yaml:"rate_limit"` // 速率限制配置
+	WebSearch         WebSearchConfig  `yaml:"web_search"` // Web 搜索配置
 }
 
 // GatewayConfig 配置 HTTP 网关。
@@ -118,6 +119,14 @@ type RateLimitConfig struct {
 	RequestsPerSec float64 `yaml:"requests_per_sec"` // 每秒最大请求数（per IP/用户）
 	Burst          int     `yaml:"burst"`             // 突发容量
 	TokenQuota     int     `yaml:"token_quota"`       // 每用户每日 token 配额（0 = 不限）
+}
+
+// WebSearchConfig Web 搜索配置。
+type WebSearchConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Engine  string `yaml:"engine"`   // brave / searxng（默认 brave）
+	APIKey  string `yaml:"api_key"`  // 搜索 API key（Brave）
+	BaseURL string `yaml:"base_url"` // 自部署搜索引擎地址（SearXNG）
 }
 
 // Load 从 YAML 文件加载配置并应用默认值。
