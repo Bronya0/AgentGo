@@ -28,6 +28,7 @@ type Config struct {
 	MCP               MCPConfig        `yaml:"mcp"`        // MCP 协议配置
 	RateLimit         RateLimitConfig  `yaml:"rate_limit"` // 速率限制配置
 	WebSearch         WebSearchConfig  `yaml:"web_search"` // Web 搜索配置
+	WebhookURLs       []string         `yaml:"webhook_urls"` // Webhook 白名单（空则不限制）
 }
 
 // GatewayConfig 配置 HTTP 网关。

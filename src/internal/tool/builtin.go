@@ -35,6 +35,18 @@ func Builtins(workspaceDir string) []Tool {
 	}
 }
 
+// SafeBuiltins 返回不含 run_command 的安全工具列表。
+// 用于 cron 等自动化场景，仅保留沙箱化命令执行。
+func SafeBuiltins(workspaceDir string) []Tool {
+	return []Tool{
+		ReadFile(workspaceDir),
+		ListDir(workspaceDir),
+		GrepFiles(workspaceDir),
+		RunCommandSandboxed(workspaceDir),
+		WebFetch(),
+	}
+}
+
 // ReadFile 读取文件内容（限制在 workspaceDir 内）。
 func ReadFile(workspaceDir string) Tool {
 	return Tool{

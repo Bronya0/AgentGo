@@ -186,4 +186,9 @@ web_search:
   engine: brave                  # brave（推荐）或 searxng（自部署）
   api_key: ""                    # Brave Search API Key（https://brave.com/search/api/）
   base_url: ""                   # SearXNG 实例地址（仅 searxng 引擎时需要）
-  # token_quota: 1000000
+
+# Webhook 白名单
+# 限制 webhook_notify 工具只能向以下 URL 发送通知
+# 为空则不限制（注意：cron 模式下强烈建议配置白名单，防止 LLM 被诱导发送到恶意地址）
+# webhook_urls:
+#   - "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"

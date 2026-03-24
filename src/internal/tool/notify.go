@@ -12,7 +12,8 @@ import (
 )
 
 // WebhookNotify 通过 webhook 发送通知（支持企业微信、钉钉、飞书等）。
-func WebhookNotify() Tool {
+// allowedURLs 为白名单，若非空则只允许向这些 URL 发送；为空则允许任意 URL。
+func WebhookNotify(allowedURLs []string) Tool {
 	client := &http.Client{Timeout: 15 * time.Second}
 
 	return Tool{
@@ -45,6 +46,21 @@ func WebhookNotify() Tool {
 			if err != nil {
 				return Errf("%v", err)
 			}
+
+			// 白名单检查
+			if len(allowedURLs) > 0 {
+				allowed := false
+				for _, u := range allowedURLs {
+					if webhookURL == u {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					return Errf("webhook URL not in allowlist; configure webhook_urls in config")
+				}
+			}
+
 			title, _ := args["title"].(string)
 
 			// 构建通用 JSON payload（兼容多种 webhook 格式）

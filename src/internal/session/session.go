@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/bronya/mini-agent/internal/provider"
 )
@@ -155,4 +156,45 @@ func (p *Pool) ListIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// Delete 删除指定会话（从内存和磁盘移除）。
+func (p *Pool) Delete(id string) {
+	p.mu.Lock()
+	s, ok := p.sessions[id]
+	if ok {
+		delete(p.sessions, id)
+	}
+	p.mu.Unlock()
+
+	if ok && p.dataDir != "" {
+		fp := filepath.Join(p.dataDir, id+".json")
+		_ = os.Remove(fp)
+	}
+	_ = s // avoid unused
+}
+
+// Expire 删除超过 maxAge 未活动的会话。返回被删除的会话数量。
+func (p *Pool) Expire(maxAge time.Duration) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	var toDelete []string
+	for id := range p.sessions {
+		if p.dataDir != "" {
+			fp := filepath.Join(p.dataDir, id+".json")
+			info, err := os.Stat(fp)
+			if err == nil && info.ModTime().Before(cutoff) {
+				toDelete = append(toDelete, id)
+			}
+		}
+	}
+	for _, id := range toDelete {
+		delete(p.sessions, id)
+		if p.dataDir != "" {
+			_ = os.Remove(filepath.Join(p.dataDir, id+".json"))
+		}
+	}
+	return len(toDelete)
 }

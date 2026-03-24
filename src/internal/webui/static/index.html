@@ -83,35 +83,73 @@ body {
 .panel { flex:1; display:none; flex-direction:column; overflow:hidden; }
 .panel.active { display: flex; }
 .chat-messages {
-  flex: 1; overflow-y: auto; padding: 20px; scroll-behavior: smooth;
+  flex: 1; overflow-y: auto; padding: 20px 0; scroll-behavior: smooth;
 }
 .msg {
-  max-width: 85%; margin-bottom: 16px; animation: fadeIn 0.2s;
+  padding: 8px 24px; animation: fadeIn 0.2s;
+  display: flex; gap: 12px; max-width: 100%;
 }
 @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
-.msg-user { margin-left: auto; }
-.msg-user .msg-bubble {
-  background: var(--accent); color: #fff; border-radius: 16px 16px 4px 16px;
-  padding: 10px 16px; font-size: 14px; line-height: 1.6;
+
+/* Avatar */
+.msg-avatar {
+  width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
 }
-.msg-assistant .msg-bubble {
-  background: var(--bg3); border-radius: 16px 16px 16px 4px;
-  padding: 12px 16px; font-size: 14px; line-height: 1.6;
+.msg-user .msg-avatar { background: var(--accent); }
+.msg-assistant .msg-avatar { background: var(--bg3); border: 1px solid var(--border); }
+
+.msg-body { flex: 1; min-width: 0; }
+.msg-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
 }
-/* highlight.js code blocks override */
+.msg-header .msg-name { font-size: 13px; font-weight: 600; }
+.msg-header .msg-time { font-size: 11px; color: var(--text2); }
+
+.msg-user { }
+.msg-user .msg-content {
+  font-size: 14px; line-height: 1.6; color: var(--text);
+}
+.msg-assistant .msg-content {
+  font-size: 14px; line-height: 1.6;
+}
+/* assistant text bubble */
+.msg-bubble {
+  font-size: 14px; line-height: 1.7;
+}
+
+/* user-attached images */
+.msg-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.msg-images img {
+  max-width: 240px; max-height: 180px; border-radius: 8px;
+  border: 1px solid var(--border); cursor: pointer; transition: transform 0.15s;
+}
+.msg-images img:hover { transform: scale(1.02); }
+
+/* highlight.js code blocks */
 .msg-assistant .msg-bubble pre {
-  margin: 8px 0; border-radius: 6px; overflow-x: auto;
-  font-family: var(--mono); font-size: 13px;
+  margin: 8px 0; border-radius: 8px; overflow-x: auto;
+  font-family: var(--mono); font-size: 13px; position: relative;
 }
 .msg-assistant .msg-bubble pre code.hljs {
-  border-radius: 6px; font-size: 13px;
+  border-radius: 8px; font-size: 13px;
 }
 .msg-assistant .msg-bubble code:not(.hljs) {
   font-family: var(--mono); font-size: 13px; background: var(--bg);
   padding: 1px 5px; border-radius: 3px;
 }
-.msg-label { font-size: 11px; color: var(--text2); margin-bottom: 4px; padding: 0 4px; }
-.msg-user .msg-label { text-align: right; }
+
+/* copy button on code blocks */
+.code-copy-btn {
+  position: absolute; top: 6px; right: 6px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text2); font-size: 11px; padding: 2px 8px; cursor: pointer;
+  opacity: 0; transition: opacity 0.15s;
+}
+.msg-assistant .msg-bubble pre:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover { color: var(--text); background: var(--border); }
+.code-copy-btn.copied { color: var(--green); }
 
 /* tool call cards */
 .tool-card {
@@ -143,26 +181,98 @@ body {
 
 /* --- input area --- */
 .chat-input-area {
-  padding: 12px 20px 16px; border-top: 1px solid var(--border);
+  padding: 12px 24px 16px; border-top: 1px solid var(--border);
   background: var(--bg2); flex-shrink: 0;
 }
-.input-row { display: flex; gap: 8px; align-items: flex-end; }
-.input-row textarea {
-  flex: 1; background: var(--bg3); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 14px; color: var(--text);
-  font-size: 14px; resize: none; height: 44px; max-height: 120px;
-  font-family: inherit; outline: none; transition: border 0.15s;
+
+/* image preview strip */
+.input-attachments {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;
 }
-.input-row textarea:focus { border-color: var(--accent); }
-.input-row textarea::placeholder { color: var(--text2); }
-.send-btn {
+.input-attachments:empty { display: none; }
+.attach-preview {
+  position: relative; width: 64px; height: 64px;
+  border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
+}
+.attach-preview img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.attach-preview .attach-remove {
+  position: absolute; top: 2px; right: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: rgba(0,0,0,0.7); color: #fff; border: none;
+  font-size: 11px; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; line-height: 1;
+}
+.attach-preview .attach-remove:hover { background: var(--red); }
+
+.input-row { display: flex; gap: 8px; align-items: flex-end; }
+.input-wrapper {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0; display: flex; flex-direction: column;
+  transition: border 0.15s;
+}
+.input-wrapper:focus-within { border-color: var(--accent); }
+.input-wrapper textarea {
+  width: 100%; background: transparent; border: none;
+  padding: 10px 14px; color: var(--text);
+  font-size: 14px; resize: none; height: 44px; max-height: 120px;
+  font-family: inherit; outline: none;
+}
+.input-wrapper textarea::placeholder { color: var(--text2); }
+
+/* input toolbar */
+.input-toolbar {
+  display: flex; align-items: center; gap: 4px; padding: 0 8px 6px;
+}
+.input-toolbar .toolbar-btn {
+  background: none; border: none; color: var(--text2); cursor: pointer;
+  font-size: 16px; padding: 2px 6px; border-radius: 4px; transition: all 0.15s;
+}
+.input-toolbar .toolbar-btn:hover { color: var(--text); background: var(--bg); }
+.input-toolbar .toolbar-hint {
+  flex: 1; text-align: right; font-size: 11px; color: var(--text2); opacity: 0.6;
+}
+
+.send-btn, .abort-btn {
   width: 44px; height: 44px; border-radius: var(--radius); border: none;
-  background: var(--accent); color: #fff; cursor: pointer; font-size: 18px;
+  cursor: pointer; font-size: 18px;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.15s; flex-shrink: 0;
 }
+.send-btn { background: var(--accent); color: #fff; }
 .send-btn:hover { background: var(--accent2); }
 .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.abort-btn { background: var(--red); color: #fff; }
+.abort-btn:hover { background: #ef4444; }
+
+/* drag overlay */
+.drag-overlay {
+  display: none; position: absolute; inset: 0;
+  background: rgba(99,102,241,0.1); border: 2px dashed var(--accent);
+  z-index: 100; justify-content: center; align-items: center;
+  font-size: 16px; color: var(--accent); border-radius: 8px;
+}
+.drag-overlay.visible { display: flex; }
+
+/* --- empty state --- */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; color: var(--text2);
+  padding: 40px;
+}
+.empty-state .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
+.empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; }
+.empty-state p { font-size: 14px; margin-bottom: 24px; text-align: center; max-width: 400px; }
+.suggestion-chips {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+}
+.suggestion-chip {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 20px; padding: 8px 16px; font-size: 13px;
+  cursor: pointer; color: var(--text2); transition: all 0.15s;
+}
+.suggestion-chip:hover { border-color: var(--accent); color: var(--accent); }
 
 /* --- overview panel --- */
 .overview { padding: 24px; overflow-y: auto; }
@@ -210,18 +320,9 @@ body {
 .btn-open { border-color: var(--accent); color: var(--accent); }
 .btn-open:hover { background: var(--accent); color: #fff; }
 
-/* abort button */
-.abort-btn {
-  width: 44px; height: 44px; border-radius: var(--radius); border: none;
-  background: var(--red); color: #fff; cursor: pointer; font-size: 16px;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s; flex-shrink: 0;
-}
-.abort-btn:hover { background: #ef4444; }
-
 /* thinking animation */
 .thinking-indicator {
-  display: flex; gap: 5px; padding: 12px 16px; align-items: center;
+  display: flex; gap: 5px; padding: 4px 0; align-items: center;
 }
 .thinking-indicator span { font-size:13px; color:var(--text2); margin-right:6px; }
 .thinking-dot {
@@ -273,6 +374,15 @@ body {
   color: var(--text2);
 }
 
+/* image lightbox */
+.lightbox {
+  display: none; position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.85); justify-content: center; align-items: center;
+  cursor: zoom-out;
+}
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
 /* scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -286,6 +396,7 @@ body {
   .sidebar-sessions { display: none; }
   .nav-item { justify-content: center; padding: 12px; }
   .nav-item .icon { margin: 0; }
+  .msg { padding: 8px 12px; }
 }
 </style>
 </head>
@@ -321,11 +432,31 @@ body {
   </div>
 
   <!-- Chat Panel -->
-  <div class="panel active" id="panel-chat">
-    <div class="chat-messages" id="chatMessages"></div>
+  <div class="panel active" id="panel-chat" style="position:relative;">
+    <div class="drag-overlay" id="dragOverlay">拖放图片到此处</div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🤖</div>
+        <h3>AgentGo</h3>
+        <p>你的 AI 助手已就绪。输入消息开始对话，支持粘贴或拖放图片。</p>
+        <div class="suggestion-chips">
+          <div class="suggestion-chip" onclick="useSuggestion('分析当前项目的代码结构')">分析代码结构</div>
+          <div class="suggestion-chip" onclick="useSuggestion('帮我做一次安全审查')">安全审查</div>
+          <div class="suggestion-chip" onclick="useSuggestion('查看最近的 git 提交记录')">查看提交</div>
+        </div>
+      </div>
+    </div>
     <div class="chat-input-area">
+      <div class="input-attachments" id="inputAttachments"></div>
       <div class="input-row">
-        <textarea id="chatInput" placeholder="输入消息... (Shift+Enter 换行)" rows="1"></textarea>
+        <div class="input-wrapper" id="inputWrapper">
+          <textarea id="chatInput" placeholder="输入消息... (Shift+Enter 换行，Ctrl+V 粘贴图片)" rows="1"></textarea>
+          <div class="input-toolbar">
+            <button class="toolbar-btn" onclick="triggerImageUpload()" title="添加图片">🖼️</button>
+            <input type="file" id="imageFileInput" accept="image/*" multiple style="display:none" onchange="handleFileSelect(event)">
+            <span class="toolbar-hint">Enter 发送 · Shift+Enter 换行</span>
+          </div>
+        </div>
         <button class="abort-btn" id="abortBtn" onclick="abortMessage()" style="display:none" title="中止生成">■</button>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="发送">▶</button>
       </div>
@@ -348,6 +479,11 @@ body {
       <tbody id="sessionTableBody"></tbody>
     </table>
   </div>
+</div>
+
+<!-- Image lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <img id="lightboxImg" src="" alt="">
 </div>
 
 <script src="/ui/static/vendor/marked.min.js"></script>
