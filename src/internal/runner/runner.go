@@ -328,29 +328,48 @@ func (r *Runner) buildMessages(sess *session.Session) []provider.Message {
 
 	// 上下文截断 + 图片 vision 转换
 	trimmed := r.trimHistory(history)
+
+	// 收集需要注入的 vision 消息：记录插入位置和内容
+	type visionInsert struct {
+		afterIdx int // 在 trimmed 中的索引（紧跟在这条消息之后插入）
+		question string
+		dataURI  string
+	}
+	var visionInserts []visionInsert
 	for i, msg := range trimmed {
 		if msg.Role == provider.RoleTool && strings.HasPrefix(msg.Content, "[IMAGE_VISION]") {
 			question, dataURI := parseVisionMarker(msg.Content)
-			// 将 tool result 替换为简短文本，然后在后续插入一条 user 消息携带图片
 			trimmed[i].Content = fmt.Sprintf("[Image provided for analysis. Question: %s]", question)
-			// 查找是否可以追加 user vision 消息
 			if dataURI != "" {
-				// 在当前消息序列末尾追加 vision 请求
-				messages = append(messages, trimmed[:i+1]...)
-				messages = append(messages, provider.Message{
-					Role: provider.RoleUser,
-					ContentParts: []provider.ContentPart{
-						{Type: "text", Text: question},
-						{Type: "image_url", ImageURL: dataURI},
-					},
-				})
-				messages = append(messages, trimmed[i+1:]...)
-				return messages
+				visionInserts = append(visionInserts, visionInsert{afterIdx: i, question: question, dataURI: dataURI})
 			}
 		}
 	}
 
-	messages = append(messages, trimmed...)
+	// 如果没有 vision 消息，直接拼接返回
+	if len(visionInserts) == 0 {
+		messages = append(messages, trimmed...)
+		return messages
+	}
+
+	// 有 vision 消息，按位置插入 user vision 消息
+	insertSet := make(map[int]visionInsert, len(visionInserts))
+	for _, vi := range visionInserts {
+		insertSet[vi.afterIdx] = vi
+	}
+	for i, msg := range trimmed {
+		messages = append(messages, msg)
+		if vi, ok := insertSet[i]; ok {
+			messages = append(messages, provider.Message{
+				Role: provider.RoleUser,
+				ContentParts: []provider.ContentPart{
+					{Type: "text", Text: vi.question},
+					{Type: "image_url", ImageURL: vi.dataURI},
+				},
+			})
+		}
+	}
+
 	return messages
 }
 
@@ -509,6 +528,14 @@ func (r *Runner) trimHistory(history []provider.Message) []provider.Message {
 		start = i
 		used += msgChars[i]
 	}
+
+	// 确保不破坏 tool_use / tool_result 配对：
+	// 如果 start 处是 tool result，向前回退到对应的 assistant（带 tool_calls）
+	for start > 0 && history[start].Role == provider.RoleTool {
+		start--
+	}
+	// 如果 start 处是带 tool_calls 的 assistant，确保其所有 tool result 也被包含
+	// （tool result 在 assistant 之后，所以不需要处理）
 
 	kept := make([]provider.Message, 0, 1+len(history)-start)
 

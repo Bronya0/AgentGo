@@ -83,7 +83,6 @@ func searchBrave(ctx context.Context, client *http.Client, apiKey, query string,
 		return Errf("web_search: %v", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("X-Subscription-Token", apiKey)
 
 	resp, err := client.Do(req)
@@ -92,7 +91,10 @@ func searchBrave(ctx context.Context, client *http.Client, apiKey, query string,
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	if err != nil {
+		return Errf("web_search: read response: %v", err)
+	}
 	if resp.StatusCode != 200 {
 		return Errf("web_search: Brave API returned HTTP %d: %s", resp.StatusCode, truncateLine(string(body), 200))
 	}
@@ -137,7 +139,10 @@ func searchSearXNG(ctx context.Context, client *http.Client, baseURL, query stri
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	if err != nil {
+		return Errf("web_search: read response: %v", err)
+	}
 	if resp.StatusCode != 200 {
 		return Errf("web_search: SearXNG returned HTTP %d", resp.StatusCode)
 	}

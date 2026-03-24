@@ -53,6 +53,7 @@ type Service struct {
 	onError  ErrorNotifier
 	entries  map[string]cron.EntryID // job ID -> cron entry ID
 	jobs     map[string]Job
+	mu       sync.Mutex // 保护 entries 和 jobs
 
 	// 执行历史日志
 	logMu   sync.Mutex
@@ -89,9 +90,11 @@ func (s *Service) Add(id, schedule, prompt string) error {
 	}
 
 	// 如果已存在同 ID 的任务，先移除
+	s.mu.Lock()
 	if entryID, ok := s.entries[id]; ok {
 		s.c.Remove(entryID)
 	}
+	s.mu.Unlock()
 
 	job := Job{ID: id, Schedule: schedule, Prompt: prompt}
 	entryID, err := s.c.AddFunc(spec, func() {
@@ -102,8 +105,10 @@ func (s *Service) Add(id, schedule, prompt string) error {
 		return fmt.Errorf("add cron func: %w", err)
 	}
 
+	s.mu.Lock()
 	s.entries[id] = entryID
 	s.jobs[id] = job
+	s.mu.Unlock()
 	return nil
 }
 
@@ -172,6 +177,8 @@ func (s *Service) RunHistory(jobID string, limit int) []RunRecord {
 
 // Remove 移除一个定时任务。
 func (s *Service) Remove(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	entryID, ok := s.entries[id]
 	if !ok {
 		return false
@@ -184,6 +191,8 @@ func (s *Service) Remove(id string) bool {
 
 // List 返回所有已注册的任务列表。
 func (s *Service) List() []Job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out := make([]Job, 0, len(s.jobs))
 	for _, j := range s.jobs {
 		out = append(out, j)

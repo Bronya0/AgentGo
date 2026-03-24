@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -77,6 +79,21 @@ func ImageUnderstand(workspaceDir string) Tool {
 
 // fetchImageAsDataURI 下载远程图片并转为 data URI。
 func fetchImageAsDataURI(ctx context.Context, client *http.Client, rawURL string) (string, error) {
+	// SSRF 防护：仅允许 HTTPS，禁止内网地址
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return "", fmt.Errorf("only HTTPS URLs are allowed (got %s)", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return "", fmt.Errorf("access to private/internal IP addresses is not allowed")
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
