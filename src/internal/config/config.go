@@ -15,19 +15,20 @@ import (
 // Config 是 mini-agent 的顶层配置。
 type Config struct {
 	Gateway           GatewayConfig    `yaml:"gateway"`
-	Provider          ProviderConfig   `yaml:"provider"`   // 单 provider 简写
-	Providers         []ProviderConfig `yaml:"providers"`  // 多 provider failover 列表
+	Provider          ProviderConfig   `yaml:"provider"`  // 单 provider 简写
+	Providers         []ProviderConfig `yaml:"providers"` // 多 provider failover 列表
 	SkillDirs         []string         `yaml:"skill_dirs"`
 	WorkspaceDir      string           `yaml:"workspace_dir"`
 	MaxContextTokens  int              `yaml:"max_context_tokens"`
+	MaxTurns          int              `yaml:"max_turns"`
 	SystemPromptExtra string           `yaml:"system_prompt_extra"`
 	Crons             []CronJobConfig  `yaml:"crons"`
 	Memory            MemoryConfig     `yaml:"memory"`
-	Channels          ChannelsConfig   `yaml:"channels"`   // 聊天渠道配置
-	ACL               ACLConfig        `yaml:"acl"`        // 访问控制配置
-	MCP               MCPConfig        `yaml:"mcp"`        // MCP 协议配置
-	RateLimit         RateLimitConfig  `yaml:"rate_limit"` // 速率限制配置
-	WebSearch         WebSearchConfig  `yaml:"web_search"` // Web 搜索配置
+	Channels          ChannelsConfig   `yaml:"channels"`     // 聊天渠道配置
+	ACL               ACLConfig        `yaml:"acl"`          // 访问控制配置
+	MCP               MCPConfig        `yaml:"mcp"`          // MCP 协议配置
+	RateLimit         RateLimitConfig  `yaml:"rate_limit"`   // 速率限制配置
+	WebSearch         WebSearchConfig  `yaml:"web_search"`   // Web 搜索配置
 	WebhookURLs       []string         `yaml:"webhook_urls"` // Webhook 白名单（空则不限制）
 }
 
@@ -40,7 +41,7 @@ type GatewayConfig struct {
 // ProviderConfig 描述一个 LLM provider。
 type ProviderConfig struct {
 	ID      string        `yaml:"id"`
-	Type    string        `yaml:"type"`     // openai（默认）
+	Type    string        `yaml:"type"` // openai（默认）
 	BaseURL string        `yaml:"base_url"`
 	APIKey  string        `yaml:"api_key"`
 	Model   string        `yaml:"model"`
@@ -102,10 +103,10 @@ type FeishuChannelConfig struct {
 type ACLConfig struct {
 	Enabled       bool     `yaml:"enabled"`
 	DefaultPolicy string   `yaml:"default_policy"` // "allow"（默认）或 "deny"
-	Admins        []string `yaml:"admins"`          // 管理员: ["platform:userID", ...]
-	AllowUsers    []string `yaml:"allow_users"`     // 白名单
-	DenyUsers     []string `yaml:"deny_users"`      // 黑名单
-	DenyTools     []string `yaml:"deny_tools"`      // 非管理员禁用的工具
+	Admins        []string `yaml:"admins"`         // 管理员: ["platform:userID", ...]
+	AllowUsers    []string `yaml:"allow_users"`    // 白名单
+	DenyUsers     []string `yaml:"deny_users"`     // 黑名单
+	DenyTools     []string `yaml:"deny_tools"`     // 非管理员禁用的工具
 }
 
 // MCPConfig MCP 协议服务端配置。
@@ -118,8 +119,8 @@ type MCPConfig struct {
 type RateLimitConfig struct {
 	Enabled        bool    `yaml:"enabled"`
 	RequestsPerSec float64 `yaml:"requests_per_sec"` // 每秒最大请求数（per IP/用户）
-	Burst          int     `yaml:"burst"`             // 突发容量
-	TokenQuota     int     `yaml:"token_quota"`       // 每用户每日 token 配额（0 = 不限）
+	Burst          int     `yaml:"burst"`            // 突发容量
+	TokenQuota     int     `yaml:"token_quota"`      // 每用户每日 token 配额（0 = 不限）
 }
 
 // WebSearchConfig Web 搜索配置。
@@ -181,6 +182,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxContextTokens <= 0 {
 		c.MaxContextTokens = 100_000
+	}
+	if c.MaxTurns <= 0 {
+		c.MaxTurns = 32
 	}
 	for i := range c.Providers {
 		c.applyProviderDefaults(&c.Providers[i])

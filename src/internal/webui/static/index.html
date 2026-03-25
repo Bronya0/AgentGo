@@ -152,10 +152,30 @@ body {
 .code-copy-btn.copied { color: var(--green); }
 
 /* tool call cards */
-.tool-card {
-  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;
-  margin: 8px 0; overflow: hidden; font-size: 12px;
+.tool-group {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; margin: 8px 0; overflow: hidden; font-size: 13px;
 }
+.tool-group-header {
+  display: flex; align-items: center; gap: 6px; padding: 7px 12px;
+  cursor: pointer; user-select: none; color: var(--text2);
+}
+.tool-group-header:hover { color: var(--text); }
+.tool-group-chevron { transition: transform 0.2s; font-style: normal; }
+.tool-group.open .tool-group-chevron { transform: rotate(90deg); }
+.tool-group-body {
+  display: none; border-top: 1px solid var(--border);
+  max-height: 260px; overflow-y: auto;
+}
+.tool-group.open .tool-group-body { display: block; }
+.tool-group-counter {
+  font-size: 11px; color: var(--text2); margin-left: auto; font-family: var(--mono);
+}
+.tool-card {
+  background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden; font-size: 12px;
+}
+.tool-card:last-child { border-bottom: none; }
 .tool-card-header {
   display: flex; align-items: center; gap: 8px; padding: 7px 10px;
   background: rgba(255,255,255,0.02); cursor: pointer;

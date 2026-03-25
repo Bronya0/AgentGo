@@ -55,6 +55,9 @@ workspace_dir: "."
 # 上下文 token 上限
 max_context_tokens: 100000
 
+# Agent 最大工具调用轮次（防无限循环，默认 200）
+max_turns: 200
+
 # 额外 system prompt（追加到默认 prompt 后）
 system_prompt_extra: ""
 

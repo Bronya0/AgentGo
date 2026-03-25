@@ -136,6 +136,10 @@ function handleEvent(data) {
       if (currentThinkEl) {
         currentThinkEl.closest('.think-block').classList.remove('open');
       }
+      // Collapse tool groups
+      if (currentMsgContainer) {
+        currentMsgContainer.querySelectorAll('.tool-group.open').forEach(g => g.classList.remove('open'));
+      }
       isGenerating = false;
       currentMsgContainer = null;
       currentTextEl = null;
@@ -316,11 +320,45 @@ function appendAssistantText(text) {
   scheduleRender();
 }
 
-// --- Tool cards ---
+// --- Tool cards (grouped in scrollable container) ---
+function ensureToolGroup() {
+  ensureContainer();
+  // Reuse existing open group if last child is a tool-group
+  const last = currentMsgContainer.lastElementChild;
+  if (last && last.classList.contains('tool-group')) {
+    return last;
+  }
+  // Create new group
+  const group = document.createElement('div');
+  group.className = 'tool-group open';
+  group.innerHTML =
+    '<div class="tool-group-header" onclick="this.parentElement.classList.toggle(\'open\')">' +
+      '<em class="tool-group-chevron">▶</em> <span>🔧 工具调用</span>' +
+      '<span class="tool-group-counter">0</span>' +
+    '</div>' +
+    '<div class="tool-group-body"></div>';
+  currentMsgContainer.appendChild(group);
+  return group;
+}
+
+function updateToolGroupCounter(group) {
+  const counter = group.querySelector('.tool-group-counter');
+  const count = group.querySelectorAll('.tool-card').length;
+  const running = group.querySelectorAll('.tool-status.running').length;
+  if (running > 0) {
+    counter.textContent = count + ' 个调用 · ' + running + ' 运行中';
+  } else {
+    counter.textContent = count + ' 个调用 · 全部完成';
+  }
+}
+
 function appendToolCard(callId, name, args) {
   ensureContainer();
   currentTextEl = null;
   currentTextBuf = '';
+
+  const group = ensureToolGroup();
+  const body = group.querySelector('.tool-group-body');
 
   const card = document.createElement('div');
   card.className = 'tool-card';
@@ -342,7 +380,10 @@ function appendToolCard(callId, name, args) {
         '<div class="tool-output">等待结果...</div>' +
       '</div>' +
     '</div>';
-  currentMsgContainer.appendChild(card);
+  body.appendChild(card);
+  updateToolGroupCounter(group);
+  // Auto scroll the group body to bottom
+  body.scrollTop = body.scrollHeight;
   smartScroll();
 }
 
@@ -368,6 +409,9 @@ function updateToolCard(callId, name, output) {
   if (outputEl) {
     outputEl.textContent = output || '(无输出)';
   }
+  // Update group counter
+  const group = card.closest('.tool-group');
+  if (group) updateToolGroupCounter(group);
 }
 
 // --- Code copy buttons ---
