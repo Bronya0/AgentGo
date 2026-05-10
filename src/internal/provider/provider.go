@@ -24,19 +24,20 @@ type Message struct {
 	Reasoning    string        `json:"reasoning,omitempty"`
 	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
 	ToolCallID   string        `json:"tool_call_id,omitempty"` // RoleTool 时的关联 ID
+	Usage        Usage         `json:"usage,omitempty"`
 }
 
 // ContentPart 是多模态消息中的一个内容片段。
 type ContentPart struct {
-	Type     string `json:"type"`               // "text" 或 "image_url"
+	Type     string `json:"type"`                // "text" 或 "image_url"
 	Text     string `json:"text,omitempty"`      // type=text 时
 	ImageURL string `json:"image_url,omitempty"` // type=image_url 时，base64 data URI 或 URL
 }
 
 // ToolCall 表示 LLM 请求的一次工具调用。
 type ToolCall struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 	Arguments string `json:"arguments"` // JSON string
 }
 
@@ -47,12 +48,20 @@ type ToolDefinition struct {
 	Parameters  any    `json:"parameters"` // JSON Schema
 }
 
+// Usage 是一次模型调用的 token 用量。
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // StreamDelta 是流式输出的一个片段。
 type StreamDelta struct {
-	Text     string    // 文本增量
-	Reasoning string   // 思考增量（若 provider 支持）
-	ToolCall *ToolCall // 工具调用增量（ID 可能跨多个 delta 组装）
-	Done     bool      // 流结束标记
+	Text      string    // 文本增量
+	Reasoning string    // 思考增量（若 provider 支持）
+	ToolCall  *ToolCall // 工具调用增量（ID 可能跨多个 delta 组装）
+	Usage     *Usage    // token 用量（若 provider 返回）
+	Done      bool      // 流结束标记
 }
 
 // StreamHandler 接收流式输出。

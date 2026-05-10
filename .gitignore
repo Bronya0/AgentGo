@@ -1,5 +1,6 @@
 # Binaries
-agent
+/agent
+/src/agent
 *.exe
 *.dll
 *.so
@@ -9,7 +10,6 @@ agent
 
 # Go
 *.out
-go.sum
 *.test
 bin/
 dist/

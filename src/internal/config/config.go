@@ -4,8 +4,10 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -30,6 +32,7 @@ type Config struct {
 	RateLimit         RateLimitConfig  `yaml:"rate_limit"`   // 速率限制配置
 	WebSearch         WebSearchConfig  `yaml:"web_search"`   // Web 搜索配置
 	WebhookURLs       []string         `yaml:"webhook_urls"` // Webhook 白名单（空则不限制）
+	Render            RenderConfig     `yaml:"render"`       // 渲染配置
 }
 
 // GatewayConfig 配置 HTTP 网关。
@@ -131,6 +134,28 @@ type WebSearchConfig struct {
 	BaseURL string `yaml:"base_url"` // 自部署搜索引擎地址（SearXNG）
 }
 
+// RenderConfig 渲染配置。
+type RenderConfig struct {
+	Theme string `yaml:"theme"` // glamour 主题：auto, dark, light, notty, dracula（默认 auto）
+}
+
+// Save 将当前配置写回 YAML 文件。
+// 仅保存用户可编辑的核心字段（provider 等），不写入运行时计算的默认值。
+func (c *Config) Save(path string) error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
 // Load 从 YAML 文件加载配置并应用默认值。
 // 若文件不存在则使用零值配置+默认值。
 // 支持 ${ENV_VAR} 环境变量展开。
@@ -185,6 +210,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxTurns <= 0 {
 		c.MaxTurns = 32
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		c.SkillDirs = append(c.SkillDirs, filepath.Join(home, ".agents", "skills"))
 	}
 	for i := range c.Providers {
 		c.applyProviderDefaults(&c.Providers[i])

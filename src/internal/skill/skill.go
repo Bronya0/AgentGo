@@ -46,7 +46,7 @@ type Skill struct {
 	FilePath string // 源文件路径
 }
 
-// LoadDir 从目录中加载所有 SKILL.md 文件。
+// LoadDir 从目录中加载所有 SKILL.md 文件（仅一层子目录，跳过 .git 等）。
 func LoadDir(dir string) ([]Skill, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -59,7 +59,9 @@ func LoadDir(dir string) ([]Skill, error) {
 	var skills []Skill
 	for _, e := range entries {
 		if e.IsDir() {
-			// 子目录中查找 SKILL.md
+			if strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
 			fp := filepath.Join(dir, e.Name(), "SKILL.md")
 			if s, err := LoadFile(fp); err == nil {
 				if s.Metadata.Name == "" {
@@ -170,4 +172,28 @@ func FilterAlways(skills []Skill) []Skill {
 		}
 	}
 	return out
+}
+
+// LoadAll 从多个目录加载所有 skill，按 name 去重（先加载的优先）。
+func LoadAll(dirs []string) []Skill {
+	seen := make(map[string]bool)
+	var all []Skill
+	for _, dir := range dirs {
+		skills, err := LoadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, s := range skills {
+			name := s.Metadata.Name
+			if name == "" {
+				name = s.FilePath
+			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			all = append(all, s)
+		}
+	}
+	return all
 }

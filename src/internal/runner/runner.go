@@ -38,14 +38,15 @@ const (
 
 // StreamChunk 是向调用者推送的事件。
 type StreamChunk struct {
-	Event    StreamEvent
-	Text     string
+	Event     StreamEvent
+	Text      string
 	Reasoning string
-	ToolID   string
-	ToolName string
-	ToolArgs string
-	ToolOut  string
-	Err      error
+	ToolID    string
+	ToolName  string
+	ToolArgs  string
+	ToolOut   string
+	Usage     *provider.Usage
+	Err       error
 }
 
 // ExecApprovalFn 是命令审批回调。返回 true 允许执行，false 拒绝。
@@ -59,8 +60,8 @@ type Runner struct {
 	hooks        *plugin.Hooks
 	acl          *acl.Service // 可选，nil 表示不做工具级权限检查
 	systemPrompt string
-	maxTurns     int // 最大循环次数（防无限循环），默认 32
-	maxTokens    int // 上下文 token 上限（超出时截断旧消息）
+	maxTurns     int            // 最大循环次数（防无限循环），默认 32
+	maxTokens    int            // 上下文 token 上限（超出时截断旧消息）
 	execApproval ExecApprovalFn // 可选，命令审批回调
 }
 
@@ -99,11 +100,26 @@ func New(cfg Config) *Runner {
 	}
 }
 
+// SetProvider 替换 runner 使用的 provider。
+func (r *Runner) SetProvider(p provider.Provider) {
+	r.provider = p
+}
+
+// SetExecApproval 替换 runner 使用的命令审批回调。
+// 用于 TUI 启动后注入基于 Bubble Tea 事件的审批实现。
+func (r *Runner) SetExecApproval(fn ExecApprovalFn) {
+	r.execApproval = fn
+}
+
 // Run 执行一次完整的 agent 对话，从用户消息到最终回复。
 // handler 接收流式事件（可为 nil 表示不需要流式）。
 func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage string, handler func(StreamChunk)) error {
 	if handler == nil {
 		handler = func(StreamChunk) {}
+	}
+
+	if r.provider == nil {
+		return fmt.Errorf("no provider configured, use /config to set up")
 	}
 
 	// Hook: on_message（预处理用户消息）
@@ -134,12 +150,21 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 			if delta.Reasoning != "" {
 				handler(StreamChunk{Event: EventReasoning, Reasoning: delta.Reasoning})
 			}
+			if delta.Usage != nil {
+				handler(StreamChunk{Usage: delta.Usage})
+			}
 		}
 
 		assistantMsg, err := r.provider.Chat(ctx, messages, toolDefs, streamHandler)
 		if err != nil {
 			handler(StreamChunk{Event: EventError, Err: err})
 			return fmt.Errorf("llm call (turn %d): %w", turn, err)
+		}
+		if assistantMsg.Usage.TotalTokens == 0 {
+			assistantMsg.Usage.TotalTokens = assistantMsg.Usage.PromptTokens + assistantMsg.Usage.CompletionTokens
+		}
+		if assistantMsg.Usage.TotalTokens > 0 {
+			handler(StreamChunk{Usage: &assistantMsg.Usage})
 		}
 
 		// 追加 assistant 消息到会话

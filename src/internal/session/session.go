@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -147,13 +148,32 @@ func (p *Pool) Get(id string) *Session {
 	return s
 }
 
-// ListIDs 返回所有活跃会话的 ID 列表。
+// ListIDs 返回所有活跃和已持久化会话的 ID 列表。
 func (p *Pool) ListIDs() []string {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	seen := make(map[string]bool, len(p.sessions))
 	ids := make([]string, 0, len(p.sessions))
 	for id := range p.sessions {
+		seen[id] = true
 		ids = append(ids, id)
+	}
+	dataDir := p.dataDir
+	p.mu.Unlock()
+
+	if dataDir != "" {
+		entries, err := os.ReadDir(dataDir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+					continue
+				}
+				id := strings.TrimSuffix(e.Name(), ".json")
+				if !seen[id] {
+					ids = append(ids, id)
+					seen[id] = true
+				}
+			}
+		}
 	}
 	return ids
 }

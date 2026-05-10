@@ -74,6 +74,9 @@ func (o *OpenAI) Chat(
 			msg, err = o.doFull(ctx, req)
 		}
 		if err == nil {
+			if msg.Usage.TotalTokens == 0 {
+				msg.Usage.TotalTokens = msg.Usage.PromptTokens + msg.Usage.CompletionTokens
+			}
 			return msg, nil
 		}
 		if IsFailover(err) {
@@ -99,7 +102,16 @@ func (o *OpenAI) doFull(ctx context.Context, req goai.ChatCompletionRequest) (*M
 		"prompt", resp.Usage.PromptTokens, "completion", resp.Usage.CompletionTokens)
 
 	choice := resp.Choices[0]
-	out := &Message{Role: RoleAssistant, Content: choice.Message.Content, Reasoning: choice.Message.ReasoningContent}
+	out := &Message{
+		Role:      RoleAssistant,
+		Content:   choice.Message.Content,
+		Reasoning: choice.Message.ReasoningContent,
+		Usage: Usage{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		},
+	}
 	for _, tc := range choice.Message.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{
 			ID:        tc.ID,

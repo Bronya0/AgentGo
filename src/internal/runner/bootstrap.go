@@ -19,6 +19,7 @@ import (
 
 // bootstrapFiles 是按优先级排列的候选 bootstrap 文件名。
 var bootstrapFiles = []string{
+	"AGENTS.md",
 	"AGENT.md",
 	"CLAUDE.md",
 	".agent/bootstrap.md",
