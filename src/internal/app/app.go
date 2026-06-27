@@ -132,6 +132,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		MaxTurns:     cfg.MaxTurns,
 		MaxTokens:    cfg.MaxContextTokens,
 		ExecApproval: opts.ExecApproval,
+		Checkpoint:   ckpt,
 	})
 	registry.RegisterAll(runner.SubAgentTools(r))
 
@@ -223,8 +224,12 @@ func buildProvider(cfg *config.Config) (provider.Provider, error) {
 	hasTier := false
 
 	for i, pc := range cfg.Providers {
-		if pc.Type != "" && pc.Type != "openai" {
-			return nil, fmt.Errorf("unsupported provider type %q", pc.Type)
+		pType := strings.ToLower(pc.Type)
+		if pType == "" {
+			pType = "openai"
+		}
+		if pType != "openai" && pType != "anthropic" {
+			return nil, fmt.Errorf("unsupported provider type %q (use openai or anthropic)", pc.Type)
 		}
 		id := pc.ID
 		if id == "" {
@@ -233,7 +238,7 @@ func buildProvider(cfg *config.Config) (provider.Provider, error) {
 		if pc.Model == "" {
 			return nil, fmt.Errorf("provider %q missing model", id)
 		}
-		p := provider.NewOpenAI(id, pc.BaseURL, pc.APIKey, pc.Model, pc.Timeout)
+		p := buildSingleProvider(pType, id, pc.BaseURL, pc.APIKey, pc.Model, pc.Timeout)
 		providers = append(providers, p)
 
 		switch provider.Tier(strings.ToLower(pc.Tier)) {
@@ -261,16 +266,24 @@ func buildProvider(cfg *config.Config) (provider.Provider, error) {
 	return provider.NewFailover(providers...), nil
 }
 
+// buildSingleProvider 根据类型创建单个 provider 实例。
+func buildSingleProvider(pType, id, baseURL, apiKey, model string, timeout time.Duration) provider.Provider {
+	switch pType {
+	case "anthropic":
+		return provider.NewAnthropic(id, baseURL, apiKey, model, timeout)
+	default:
+		return provider.NewOpenAI(id, baseURL, apiKey, model, timeout)
+	}
+}
+
 func buildProviderFromCLI(opts Options) (provider.Provider, error) {
 	pType := strings.ToLower(opts.ProviderType)
 	if pType == "" {
 		pType = "openai"
 	}
 	switch pType {
-	case "openai":
-		return provider.NewOpenAI("cli", opts.BaseURL, opts.APIKey, opts.Model, 120*time.Second), nil
-	case "anthropic":
-		return provider.NewAnthropic("cli", opts.BaseURL, opts.APIKey, opts.Model, 120*time.Second), nil
+	case "openai", "anthropic":
+		return buildSingleProvider(pType, "cli", opts.BaseURL, opts.APIKey, opts.Model, 120*time.Second), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q (use openai or anthropic)", pType)
 	}

@@ -382,9 +382,7 @@ func (m Model) submit(input string) (tea.Model, tea.Cmd) {
 	m.phase = phaseThinking
 	m.runStartedAt = time.Now()
 	m.autoFollow = true
-	if m.app.Checkpoint != nil {
-		m.app.Checkpoint.BeginTurn(input)
-	}
+	// checkpoint BeginTurn/SealTurn 现由 Runner.Run() 自动管理
 	m.refreshViewport()
 	// 记录本轮开始时 viewport 的行数位置（用于结束后停留在输出第一行）
 	m.turnAnchor = m.contentLineCount()
@@ -751,12 +749,13 @@ func (m *Model) applyLayout() {
 	}
 
 	taHeight := 3
-	m.textarea.SetWidth(m.width - 4)
+	// 输入框 Width(m.width-2) 减去 border(2) + padding(2) = 内容区 m.width-6
+	m.textarea.SetWidth(m.width - 6)
 	m.textarea.SetHeight(taHeight)
 
-	// 布局：header（可选） + viewport + input + status
-	// 粗略估算：input 3 行 + border 2 行 + status 1 行 = 6 行
-	vpHeight := m.height - taHeight - 2 /*input border*/ - 1 /*status*/ - 1 /*spacing*/
+	// 布局：viewport + input(taHeight+border 2) + status(1)
+	// JoinVertical 不添加额外间距行
+	vpHeight := m.height - taHeight - 2 /*input border*/ - 1 /*status*/
 	if vpHeight < 5 {
 		vpHeight = 5
 	}
@@ -919,12 +918,9 @@ func (m *Model) inlineRunningIndicator() string {
 // 保留为空函数避免其他地方引用报错。
 func (m Model) runningLabel() string { return "" }
 
-// checkpointAfterTurn 在每轮 stream 结束时调用，封存本轮快照。
-func (m *Model) checkpointAfterTurn() {
-	if m.app.Checkpoint != nil {
-		m.app.Checkpoint.SealTurn()
-	}
-}
+// checkpointAfterTurn — 已废弃，SealTurn 现由 Runner.Run() 自动管理。
+// 保留为空函数避免其他地方引用报错。
+func (m *Model) checkpointAfterTurn() {}
 
 // handleRollback 处理 /rollback 命令。
 func (m *Model) handleRollback(args []string) string {

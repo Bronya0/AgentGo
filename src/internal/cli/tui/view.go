@@ -103,8 +103,15 @@ func (m Model) statusBar() string {
 	left := strings.Join(parts, dimStyle.Render(" · "))
 	right := dimStyle.Render("? /help · ↑ history")
 
-	// 左右对齐
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	// 左右对齐：若空间不足，优先保留右侧帮助文字，截断左侧
+	leftW := lipgloss.Width(left)
+	rightW := lipgloss.Width(right)
+	avail := m.width - rightW - 2 - 1 // -2 padding, -1 min gap
+	if leftW > avail && avail > 10 {
+		left = lipgloss.NewStyle().MaxWidth(avail).Render(left)
+		leftW = lipgloss.Width(left)
+	}
+	gap := m.width - leftW - rightW - 2
 	if gap < 1 {
 		gap = 1
 	}

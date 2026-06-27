@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -92,14 +93,10 @@ func (s *Store) Search(query string, maxResults int) []Entry {
 		}
 	}
 
-	// 按 score 降序排序（简单冒泡）
-	for i := 0; i < len(matches); i++ {
-		for j := i + 1; j < len(matches); j++ {
-			if matches[j].score > matches[i].score {
-				matches[i], matches[j] = matches[j], matches[i]
-			}
-		}
-	}
+	// 按 score 降序排序
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].score > matches[j].score
+	})
 
 	result := make([]Entry, 0, maxResults)
 	for i := 0; i < len(matches) && i < maxResults; i++ {

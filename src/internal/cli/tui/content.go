@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 // blockKind 标识一个内容块的类型。
@@ -59,7 +60,8 @@ func newRenderer(theme string, width int) *renderer {
 }
 
 func (r *renderer) rebuild() {
-	w := r.width - 4
+	// 预留 2 字符给块前缀（❯ │ ● 等），glamour 换行宽度 = renderer 宽度 - 2
+	w := r.width - 2
 	if w < 40 {
 		w = 40
 	}
@@ -213,7 +215,13 @@ func (r *renderer) renderThinking(b block) string {
 	if b.text == "" {
 		return head
 	}
-	lines := strings.Split(strings.TrimRight(b.text, "\n"), "\n")
+	// 按 renderer 宽度换行，避免长行溢出导致 │ 前缀错位
+	wrapW := r.width - 4 // │ 前缀占 2 + 边距 2
+	if wrapW < 20 {
+		wrapW = 20
+	}
+	wrapped := wordwrap.String(strings.TrimRight(b.text, "\n"), wrapW)
+	lines := strings.Split(wrapped, "\n")
 	for i, ln := range lines {
 		lines[i] = thinkStyle.Render("│ " + ln)
 	}

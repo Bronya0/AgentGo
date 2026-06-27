@@ -127,7 +127,7 @@ func (l *Limiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
 		return next
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := clientIP(r)
+		key := ClientIP(r)
 		if !l.Allow(key) {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
@@ -137,8 +137,8 @@ func (l *Limiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// clientIP 提取客户端 IP。
-func clientIP(r *http.Request) string {
+// ClientIP 提取客户端 IP。
+func ClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if ip, _, ok := strings.Cut(xff, ","); ok {
 			return strings.TrimSpace(ip)

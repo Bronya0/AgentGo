@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bronya/mini-agent/internal/acl"
+	"github.com/bronya/mini-agent/internal/checkpoint"
 	"github.com/bronya/mini-agent/internal/plugin"
 	"github.com/bronya/mini-agent/internal/provider"
 	"github.com/bronya/mini-agent/internal/session"
@@ -58,11 +59,12 @@ type Runner struct {
 	provider     provider.Provider
 	tools        *tool.Registry
 	hooks        *plugin.Hooks
-	acl          *acl.Service // 可选，nil 表示不做工具级权限检查
+	acl          *acl.Service          // 可选，nil 表示不做工具级权限检查
 	systemPrompt string
-	maxTurns     int            // 最大循环次数（防无限循环），默认 32
-	maxTokens    int            // 上下文 token 上限（超出时截断旧消息）
-	execApproval ExecApprovalFn // 可选，命令审批回调
+	maxTurns     int                   // 最大循环次数（防无限循环），默认 32
+	maxTokens    int                   // 上下文 token 上限（超出时截断旧消息）
+	execApproval ExecApprovalFn        // 可选，命令审批回调
+	checkpoint   *checkpoint.Manager   // 可选，nil 表示不做文件快照
 }
 
 // Config 是 Runner 的配置。
@@ -74,7 +76,8 @@ type Config struct {
 	SystemPrompt string
 	MaxTurns     int
 	MaxTokens    int
-	ExecApproval ExecApprovalFn // 可选，命令执行审批回调
+	ExecApproval ExecApprovalFn      // 可选，命令执行审批回调
+	Checkpoint   *checkpoint.Manager  // 可选，文件快照回滚
 }
 
 // New 创建一个 Runner。
@@ -97,6 +100,7 @@ func New(cfg Config) *Runner {
 		maxTurns:     cfg.MaxTurns,
 		maxTokens:    cfg.MaxTokens,
 		execApproval: cfg.ExecApproval,
+		checkpoint:   cfg.Checkpoint,
 	}
 }
 
@@ -124,6 +128,12 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 
 	// Hook: on_message（预处理用户消息）
 	userMessage = r.hooks.ProcessMessage(ctx, userMessage)
+
+	// Checkpoint：标记一轮对话开始（所有模式自动获得回滚能力）
+	if r.checkpoint != nil {
+		r.checkpoint.BeginTurn(userMessage)
+		defer r.checkpoint.SealTurn()
+	}
 
 	// 追加用户消息
 	sess.Append(provider.Message{Role: provider.RoleUser, Content: userMessage})
@@ -167,8 +177,12 @@ func (r *Runner) Run(ctx context.Context, sess *session.Session, userMessage str
 			handler(StreamChunk{Usage: &assistantMsg.Usage})
 		}
 
-		// 追加 assistant 消息到会话
-		sess.Append(*assistantMsg)
+		// 追加 assistant 消息到会话（跳过空消息：无 content 且无 tool_calls）
+		if assistantMsg.Content != "" || len(assistantMsg.ToolCalls) > 0 {
+			sess.Append(*assistantMsg)
+		} else {
+			slog.Warn("skipping empty assistant message (no content, no tool_calls)")
+		}
 
 		// Hook: after_llm_call
 		r.hooks.AfterLLMCall(ctx, assistantMsg)
@@ -354,6 +368,9 @@ func (r *Runner) buildMessages(sess *session.Session) []provider.Message {
 	// 上下文截断 + 图片 vision 转换
 	trimmed := r.trimHistory(history)
 
+	// 过滤空 assistant 消息（content 和 tool_calls 都为空），DeepSeek 等 provider 不允许这种消息
+	trimmed = filterEmptyAssistant(trimmed)
+
 	// 收集需要注入的 vision 消息：记录插入位置和内容
 	type visionInsert struct {
 		afterIdx int // 在 trimmed 中的索引（紧跟在这条消息之后插入）
@@ -516,6 +533,19 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// filterEmptyAssistant 过滤掉 content 和 tool_calls 都为空的 assistant 消息。
+// DeepSeek 等 provider 严格要求 assistant 消息必须有 content 或 tool_calls。
+func filterEmptyAssistant(msgs []provider.Message) []provider.Message {
+	out := msgs[:0]
+	for _, m := range msgs {
+		if m.Role == provider.RoleAssistant && m.Content == "" && len(m.ToolCalls) == 0 {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // trimHistory 在 token 预算内保留尽可能多的最近消息。

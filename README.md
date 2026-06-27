@@ -41,10 +41,7 @@ providers:
 ### 运行
 
 ```bash
-# 单次对话模式
-./agent -chat "帮我列出当前目录下的所有 Go 文件"
-
-# 启动 HTTP 服务器
+# 启动 HTTP 服务（Web + WebSocket API，默认行为）
 ./agent
 
 # 带 debug 日志

@@ -24,6 +24,7 @@ type Anthropic struct {
 	maxRetries int
 	retryBase  time.Duration
 	retryMax   time.Duration
+	maxTokens  int
 }
 
 // NewAnthropic 创建一个 Anthropic provider。
@@ -40,6 +41,7 @@ func NewAnthropic(id, baseURL, apiKey, model string, timeout time.Duration) *Ant
 		maxRetries: 3,
 		retryBase:  500 * time.Millisecond,
 		retryMax:   5 * time.Second,
+		maxTokens:  8192,
 	}
 }
 
@@ -57,9 +59,11 @@ type anthropicRequest struct {
 	Tools     []anthropicTool    `json:"tools,omitempty"`
 }
 
+// anthropicMessage 的 Content 可以是 string 或 []anthropicContentBlock。
+// Anthropic API 要求 assistant 的 tool_use 和 user 的 tool_result 使用数组格式。
 type anthropicMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 type anthropicTool struct {
@@ -87,6 +91,19 @@ type anthropicContentBlock struct {
 	ID    string         `json:"id,omitempty"`
 	Name  string         `json:"name,omitempty"`
 	Input map[string]any `json:"input,omitempty"`
+	// tool_result
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"` // tool_result 的文本内容
+	IsError   bool   `json:"is_error,omitempty"`
+	// image
+	Source *anthropicImageSource `json:"source,omitempty"`
+}
+
+// anthropicImageSource 用于 image content block。
+type anthropicImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "image/png", "image/jpeg"
+	Data      string `json:"data"`       // base64 编码数据
 }
 
 // --- Streaming types ---
@@ -331,10 +348,13 @@ func (a *Anthropic) doStream(ctx context.Context, req anthropicRequest, handler 
 }
 
 // buildRequest 构建 Anthropic API 请求。
+// 正确转换内部 Message 格式到 Anthropic 的 content block 格式：
+//   - assistant 的 tool_calls → content 数组中的 tool_use 块
+//   - tool result → user 消息中的 tool_result 块
 func (a *Anthropic) buildRequest(messages []Message, tools []ToolDefinition, stream bool) anthropicRequest {
 	req := anthropicRequest{
 		Model:     a.model,
-		MaxTokens: 4096,
+		MaxTokens: a.maxTokens,
 		Stream:    stream,
 	}
 
@@ -346,16 +366,58 @@ func (a *Anthropic) buildRequest(messages []Message, tools []ToolDefinition, str
 		switch m.Role {
 		case RoleSystem:
 			systemParts = append(systemParts, m.Content)
-		case RoleUser, RoleAssistant:
-			apiMessages = append(apiMessages, anthropicMessage{
-				Role:    string(m.Role),
-				Content: m.Content,
-			})
+		case RoleUser:
+			// 多模态 user 消息（含图片）
+			if len(m.ContentParts) > 0 {
+				blocks := make([]anthropicContentBlock, 0, len(m.ContentParts))
+				for _, p := range m.ContentParts {
+					switch p.Type {
+					case "image_url":
+						blocks = append(blocks, anthropicContentBlock{
+							Type:    "image",
+							Source:  &anthropicImageSource{Type: "base64", MediaType: detectMediaType(p.ImageURL), Data: extractBase64Data(p.ImageURL)},
+						})
+					default:
+						blocks = append(blocks, anthropicContentBlock{Type: "text", Text: p.Text})
+					}
+				}
+				apiMessages = append(apiMessages, anthropicMessage{Role: "user", Content: blocks})
+			} else {
+				apiMessages = append(apiMessages, anthropicMessage{Role: "user", Content: m.Content})
+			}
+		case RoleAssistant:
+			// assistant 消息可能同时包含文本和 tool_calls
+			if len(m.ToolCalls) > 0 {
+				blocks := make([]anthropicContentBlock, 0, len(m.ToolCalls)+1)
+				if m.Content != "" {
+					blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
+				}
+				for _, tc := range m.ToolCalls {
+					var input map[string]any
+					if tc.Arguments != "" {
+						_ = json.Unmarshal([]byte(tc.Arguments), &input)
+					}
+					blocks = append(blocks, anthropicContentBlock{
+						Type:  "tool_use",
+						ID:    tc.ID,
+						Name:  tc.Name,
+						Input: input,
+					})
+				}
+				apiMessages = append(apiMessages, anthropicMessage{Role: "assistant", Content: blocks})
+			} else {
+				apiMessages = append(apiMessages, anthropicMessage{Role: "assistant", Content: m.Content})
+			}
 		case RoleTool:
-			// Anthropic 用 user message 携带 tool_result
+			// Anthropic 用 user message 携带 tool_result content block
 			apiMessages = append(apiMessages, anthropicMessage{
-				Role:    "user",
-				Content: fmt.Sprintf("[Tool result for %s]: %s", m.ToolCallID, m.Content),
+				Role: "user",
+				Content: []anthropicContentBlock{{
+					Type:        "tool_result",
+					ToolUseID:   m.ToolCallID,
+					Content:     m.Content,
+					IsError:     false,
+				}},
 			})
 		}
 	}
@@ -422,4 +484,29 @@ func (a *Anthropic) backoff(attempt int) time.Duration {
 		d = a.retryMax
 	}
 	return d + time.Duration(float64(d)*0.2*rand.Float64())
+}
+
+// detectMediaType 从 data URI 中提取媒体类型（如 "image/png"）。
+func detectMediaType(dataURI string) string {
+	// data:image/png;base64,...
+	if strings.HasPrefix(dataURI, "data:") {
+		rest := dataURI[5:]
+		if idx := strings.Index(rest, ";"); idx > 0 {
+			return rest[:idx]
+		}
+		if idx := strings.Index(rest, ","); idx > 0 {
+			return rest[:idx]
+		}
+	}
+	return "image/png"
+}
+
+// extractBase64Data 从 data URI 中提取 base64 数据部分。
+func extractBase64Data(dataURI string) string {
+	if strings.HasPrefix(dataURI, "data:") {
+		if idx := strings.Index(dataURI, ","); idx >= 0 {
+			return dataURI[idx+1:]
+		}
+	}
+	return dataURI
 }

@@ -30,10 +30,7 @@ provider:
 ### 运行
 
 ```bash
-# 单次对话
-./agent -chat "帮我列出当前目录下的所有 Go 文件"
-
-# 启动 HTTP 服务器
+# 启动 HTTP 服务（Web + WebSocket API，默认行为）
 ./agent
 
 # 带 debug 日志
@@ -122,16 +119,17 @@ LLM 调用层，定义统一的 `Provider` 接口。
 |------|------|
 | `provider.go` | 核心接口和类型：`Provider`, `Message`, `ToolCall`, `StreamHandler` |
 | `openai.go` | OpenAI 兼容客户端，支持流式 SSE、自动重试（指数退避 + jitter）、token 用量日志 |
+| `anthropic.go` | Anthropic 原生客户端，支持 tool_use/tool_result 内容块、多模态图片、流式 SSE |
 | `failover.go` | 多 Provider 自动切换，cooldown 机制防止连续失败 |
 
-**支持的服务**（任何 OpenAI 兼容 API）：
+**支持的服务**：
 
-- OpenAI
-- DeepSeek
-- Claude (via proxy)
-- Ollama
-- vLLM
-- 任何兼容 `/v1/chat/completions` 的服务
+- OpenAI（openai 格式）
+- DeepSeek（openai 格式）
+- Claude / Anthropic（anthropic 原生格式，支持 tool_use / tool_result 内容块）
+- Ollama（openai 格式）
+- vLLM（openai 格式）
+- 任何兼容 `/v1/chat/completions` 的服务（openai 格式）
 
 **Failover 配置示例**：
 

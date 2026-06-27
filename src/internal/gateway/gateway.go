@@ -135,6 +135,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	sess := s.sessions.Get(sessionID)
 
+	// Token 配额预检查（在发送 SSE headers 之前，可返回标准 HTTP 错误码）
+	if s.limiter != nil {
+		key := ratelimit.ClientIP(r)
+		if remaining := s.limiter.TokensRemaining(key); remaining == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprintf(w, `{"error":"daily token quota exceeded"}`)
+			return
+		}
+	}
+
 	// 设置 SSE 响应头（必须在 WriteHeader 前设置）
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -154,6 +166,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// 获取 per-session 互斥令牌，保证同一 session 串行执行
 	sr := s.sessionLock.get(sessionID)
+
+	// 跟踪本轮 token 用量（用于配额扣除）
+	var totalTokens int
+	clientKey := ratelimit.ClientIP(r)
+
 	err := sr.run(r.Context(), func() {
 		runErr := s.runner.Run(r.Context(), sess, req.Message, func(chunk runner.StreamChunk) {
 			switch chunk.Event {
@@ -173,9 +190,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 					send("error", map[string]any{"error": chunk.Err.Error()})
 				}
 			}
+			// 累计 token 用量（每轮 LLM 调用发送一次 Usage）
+			if chunk.Usage != nil && chunk.Usage.TotalTokens > 0 {
+				totalTokens += chunk.Usage.TotalTokens
+			}
 		})
 		if runErr != nil {
 			send("error", map[string]any{"error": runErr.Error()})
+		}
+		// 扣除 token 配额
+		if s.limiter != nil && totalTokens > 0 {
+			s.limiter.ConsumeTokens(clientKey, totalTokens)
 		}
 	})
 	if err != nil {
