@@ -210,7 +210,9 @@ func (a *App) NewGateway() *gateway.Server {
 		TokenQuota:     a.Config.RateLimit.TokenQuota,
 	})
 	g := gateway.New(a.Runner, a.Sessions, a.Config.Gateway.Addr, a.Config.Gateway.Token, limiter)
-	webui.New(a.Sessions, a.Tools, a.Version).RegisterRoutes(g.Mux())
+	webui.New(a.Sessions, a.Tools, a.Config, a.Workspace, a.Config.MaxContextTokens, a.Version).RegisterRoutes(g.Mux())
+	// 启动时自动注册当前工作区到索引
+	_ = webui.AddWorkspace(a.Workspace)
 	return g
 }
 

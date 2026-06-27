@@ -178,6 +178,69 @@ func (p *Pool) ListIDs() []string {
 	return ids
 }
 
+// SessionInfo 是会话的摘要信息（用于 UI 列表展示）。
+type SessionInfo struct {
+	ID            string    `json:"id"`
+	MessageCount  int       `json:"message_count"`
+	TokenEstimate int       `json:"token_estimate"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// ListWorkspaceSessions 列出指定工作区目录下的所有会话摘要信息。
+// 不将这些会话加载到 Pool 的内存映射中。
+func (p *Pool) ListWorkspaceSessions(workspacePath string) ([]SessionInfo, error) {
+	sessionsDir := filepath.Join(workspacePath, ".agent", "sessions")
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []SessionInfo{}, nil
+		}
+		return nil, err
+	}
+
+	var list []SessionInfo
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		fp := filepath.Join(sessionsDir, e.Name())
+
+		data, err := os.ReadFile(fp)
+		if err != nil {
+			continue
+		}
+		var s Session
+		if err := json.Unmarshal(data, &s); err != nil {
+			continue
+		}
+
+		info, err := os.Stat(fp)
+		modTime := time.Now()
+		if err == nil {
+			modTime = info.ModTime()
+		}
+
+		list = append(list, SessionInfo{
+			ID:            id,
+			MessageCount:  len(s.Messages),
+			TokenEstimate: s.TokenEstimate(),
+			UpdatedAt:     modTime,
+		})
+	}
+
+	// 按更新时间倒序
+	for i := 0; i < len(list); i++ {
+		for j := i + 1; j < len(list); j++ {
+			if list[j].UpdatedAt.After(list[i].UpdatedAt) {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
+	}
+
+	return list, nil
+}
+
 // Delete 删除指定会话（从内存和磁盘移除）。
 func (p *Pool) Delete(id string) {
 	p.mu.Lock()
