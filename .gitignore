@@ -49,3 +49,6 @@ temp/
 Thumbs.db
 .AppleDouble
 .LSOverride
+
+# Accidental
+/nul
